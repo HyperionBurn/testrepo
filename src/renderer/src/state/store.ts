@@ -1,0 +1,200 @@
+// Renderer state for the city and HUD. Pure store: no three.js or React imports.
+import { create } from 'zustand'
+import type {
+  AgentEvent,
+  AgentEventType,
+  AgentInfo,
+  CityLayout,
+  GitCommit,
+  RepoSnapshot,
+  SkylineAPI
+} from '@shared/types'
+import { buildLayout } from '@shared/layout'
+
+export type Mode = 'live' | 'replay' | 'git';
+export interface Heat { ts: number; agentId: string; kind: AgentEventType }
+
+/** Events kept in memory (ascending ts). Older events are dropped from the front. */
+export const MAX_EVENTS = 5000
+
+interface SkyState {
+  repo: RepoSnapshot | null; layout: CityLayout | null;
+  agents: AgentInfo[]; events: AgentEvent[];            // events capped at 5000, ascending ts
+  heat: Record<string, Heat>;                            // last touch per file path (live)
+  selectedPath: string | null; hoveredPath: string | null; focusAgentId: string | null;
+  mode: Mode; replayTs: number | null;                   // replay: show state as of replayTs
+  commits: GitCommit[]; firstSeen: Record<string, number>; gitTs: number | null; // git time-lapse
+  showImports: boolean; reducedMotion: boolean;
+  setRepo(s: RepoSnapshot): void;                        // recompute layout via buildLayout
+  setAgents(a: AgentInfo[]): void; pushEvent(e: AgentEvent): void; setEvents(e: AgentEvent[]): void;
+  select(path: string | null): void; hover(path: string | null): void; focusAgent(id: string | null): void;
+  setMode(m: Mode): void; setReplayTs(ts: number | null): void;
+  setCommits(c: GitCommit[]): void;                      // computes firstSeen (earliest commit ts per path)
+  setGitTs(ts: number | null): void; toggleImports(): void;
+}
+
+/** Event types that count as touching a file for heat. */
+function touches(type: AgentEventType): boolean {
+  return type === 'read' || type === 'edit' || type === 'create' || type === 'delete'
+}
+
+function detectReducedMotion(): boolean {
+  try {
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return false
+  }
+}
+
+/** Keeps events ascending by ts (inserting out-of-order arrivals) and capped at MAX_EVENTS. */
+function insertSorted(list: readonly AgentEvent[], e: AgentEvent): AgentEvent[] {
+  const last = list[list.length - 1]
+  let next: AgentEvent[]
+  if (!last || last.ts <= e.ts) {
+    next = list.concat(e)
+  } else {
+    // Binary search for the first index whose ts is greater than e.ts.
+    let lo = 0
+    let hi = list.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if ((list[mid]?.ts ?? 0) <= e.ts) lo = mid + 1
+      else hi = mid
+    }
+    next = list.slice()
+    next.splice(lo, 0, e)
+  }
+  return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next
+}
+
+/**
+ * Heat as of `ts`: the last touch per file among events with e.ts <= ts.
+ * Events are kept ascending, so this scans until the first event past ts.
+ */
+export function heatAt(state: Pick<SkyState, 'events'>, ts: number): Record<string, Heat> {
+  const heat: Record<string, Heat> = {}
+  for (const e of state.events) {
+    if (e.ts > ts) break
+    if (!e.file || !touches(e.type)) continue
+    heat[e.file] = { ts: e.ts, agentId: e.agentId, kind: e.type }
+  }
+  return heat
+}
+
+/** Heat for the live view: derived from the events array, last touch per file. */
+function heatFromEvents(events: readonly AgentEvent[]): Record<string, Heat> {
+  const heat: Record<string, Heat> = {}
+  for (const e of events) {
+    if (!e.file || !touches(e.type)) continue
+    const prev = heat[e.file]
+    if (!prev || prev.ts <= e.ts) heat[e.file] = { ts: e.ts, agentId: e.agentId, kind: e.type }
+  }
+  return heat
+}
+
+export const useSky = create<SkyState>()((set, get) => ({
+  repo: null,
+  layout: null,
+  agents: [],
+  events: [],
+  heat: {},
+  selectedPath: null,
+  hoveredPath: null,
+  focusAgentId: null,
+  mode: 'live',
+  replayTs: null,
+  commits: [],
+  firstSeen: {},
+  gitTs: null,
+  showImports: false,
+  reducedMotion: detectReducedMotion(),
+
+  setRepo(s) {
+    const layout = buildLayout(s)
+    const { selectedPath } = get()
+    set({
+      repo: s,
+      layout,
+      // Drop the selection if the file no longer exists after the rescan.
+      selectedPath: selectedPath && layout.buildings.some((b) => b.path === selectedPath) ? selectedPath : null
+    })
+  },
+
+  setAgents(a) {
+    set({ agents: a })
+  },
+
+  pushEvent(e) {
+    const events = insertSorted(get().events, e)
+    const heat = get().heat
+    if (e.file && touches(e.type)) {
+      const prev = heat[e.file]
+      if (!prev || prev.ts <= e.ts) {
+        set({ events, heat: { ...heat, [e.file]: { ts: e.ts, agentId: e.agentId, kind: e.type } } })
+        return
+      }
+    }
+    set({ events })
+  },
+
+  setEvents(e) {
+    const sorted = e.slice().sort((a, b) => a.ts - b.ts)
+    const capped = sorted.length > MAX_EVENTS ? sorted.slice(sorted.length - MAX_EVENTS) : sorted
+    set({ events: capped, heat: heatFromEvents(capped) })
+  },
+
+  select(path) {
+    set({ selectedPath: path })
+  },
+
+  hover(path) {
+    if (get().hoveredPath !== path) set({ hoveredPath: path })
+  },
+
+  focusAgent(id) {
+    set({ focusAgentId: id })
+  },
+
+  setMode(m) {
+    set({ mode: m })
+  },
+
+  setReplayTs(ts) {
+    set({ replayTs: ts })
+  },
+
+  setCommits(c) {
+    // Commits arrive newest first; firstSeen keeps the earliest commit ts per path.
+    const firstSeen: Record<string, number> = {}
+    for (const commit of c) {
+      for (const f of commit.files) {
+        const prev = firstSeen[f.path]
+        if (prev === undefined || commit.ts < prev) firstSeen[f.path] = commit.ts
+      }
+    }
+    set({ commits: c, firstSeen })
+  },
+
+  setGitTs(ts) {
+    set({ gitTs: ts })
+  },
+
+  toggleImports() {
+    set({ showImports: !get().showImports })
+  }
+}))
+
+/**
+ * Wires main-process events into the store. Returns an unsubscribe that removes all three listeners.
+ */
+export function bootstrapSky(api: SkylineAPI): () => void {
+  const offAgents = api.on('agents', (a) => useSky.getState().setAgents(a))
+  const offEvent = api.on('event', (e) => useSky.getState().pushEvent(e))
+  const offRepo = api.on('repo', (s) => useSky.getState().setRepo(s))
+  return () => {
+    offAgents()
+    offEvent()
+    offRepo()
+  }
+}
