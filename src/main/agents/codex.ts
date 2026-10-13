@@ -65,14 +65,15 @@ export function parseApplyPatch(
   const sections: Section[] = []
   let cur: Section | null = null
   for (const raw of patch.split('\n')) {
-    const line = raw.replace(/\r$/, '')
-    const head = /^\*\*\* (Add|Update|Delete) File:\s*(.+?)\s*$/.exec(line)
+    // Trailing whitespace goes first, so the patterns below never backtrack over a long run of spaces.
+    const line = raw.replace(/\r$/, '').trimEnd()
+    const head = /^\*\*\* (Add|Update|Delete) File:\s*(.+)$/.exec(line)
     if (head) {
       cur = { kind: head[1] as Section['kind'], path: head[2] ?? '', added: 0, removed: 0 }
       sections.push(cur)
       continue
     }
-    const move = /^\*\*\* Move to:\s*(.+?)\s*$/.exec(line)
+    const move = /^\*\*\* Move to:\s*(.+)$/.exec(line)
     if (move) {
       if (cur) cur.moveTo = move[1]
       continue

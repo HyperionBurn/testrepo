@@ -50,6 +50,12 @@ const CODEX_FULL_SCAN_MS = 5_000
 const DAY_MS = 86_400_000
 const HOUR_MS = 3_600_000
 const TOUCH_HISTORY = 32
+/** Bytes read per refresh round across all transcripts; a bigger backlog takes several rounds. */
+const READ_ROUND_BYTES = 4 * 1024 * 1024
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
 
 type Source = 'claude' | 'claude-sub' | 'codex'
 
@@ -65,13 +71,23 @@ interface TrackedFile {
   /** Subagent description from its .meta.json. */
   metaDescription?: string
   metaChecks: number
+  /** Size and mtime seen at the last read; equal values mean nothing new was appended. */
+  size?: number
+  mtimeMs?: number
+  /** The last read stopped before the end of the file. */
+  backlog: boolean
 }
 
-interface Candidate {
+interface Listed {
   file: string
   source: Source
   agentId: string
   parentId?: string
+}
+
+interface Candidate extends Listed {
+  size: number
+  mtimeMs: number
 }
 
 interface AgentState {
@@ -165,6 +181,16 @@ async function readDirSafe(dir: string): Promise<Dirent[]> {
   }
 }
 
+/** Size and mtime when the file exists and was modified at or after `cutoff`. */
+async function statFresh(file: string, cutoff: number): Promise<{ size: number; mtimeMs: number } | undefined> {
+  try {
+    const st = await fsp.stat(file)
+    return st.mtimeMs >= cutoff ? { size: st.size, mtimeMs: st.mtimeMs } : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Codex session_meta cwd from the first line of a rollout, read without tailing the whole file. */
 async function peekCodexCwd(file: string): Promise<string | undefined> {
   let fh: FileHandle | undefined
@@ -204,6 +230,8 @@ export class AgentHub extends EventEmitter {
   private readonly pendingFs = new Map<string, PendingFs>()
 
   private running = false
+  /** Set by stop(); cuts a refresh in progress short. Cleared by start(). */
+  private stopRequested = false
   private initialized = false
   private pollTimer?: ReturnType<typeof setInterval>
   private agentsTimer?: ReturnType<typeof setTimeout>
@@ -227,7 +255,10 @@ export class AgentHub extends EventEmitter {
   async start(): Promise<void> {
     if (this.running) return
     this.running = true
+    this.stopRequested = false
     await this.refresh()
+    // stop() may have run during the load: then nothing may be wired up.
+    if (!this.running) return
     this.initialized = true
     this.cancelAgentsTimer()
     this.emit('agents', this.getAgents())
@@ -240,6 +271,7 @@ export class AgentHub extends EventEmitter {
 
   stop(): void {
     this.running = false
+    this.stopRequested = true
     if (this.pollTimer) clearInterval(this.pollTimer)
     this.pollTimer = undefined
     this.cancelAgentsTimer()
@@ -283,6 +315,7 @@ export class AgentHub extends EventEmitter {
    * event for the pseudo agent 'fs' is emitted, deferred 3 s so late agent lines can claim it.
    */
   noteFsChange(relPath: string, kind: 'add' | 'change' | 'unlink'): void {
+    if (this.stopRequested) return
     const rel = this.relOf(relPath)
     if (!rel || rel === '.git' || rel.startsWith('.git/')) return
     const now = Date.now()
@@ -337,20 +370,48 @@ export class AgentHub extends EventEmitter {
   private async scan(): Promise<boolean> {
     const now = Date.now()
     const cutoff = now - this.maxAgeMs
-    const candidates = await this.discover(now)
-    const batch: Array<{ tf: TrackedFile; p: ParsedLine }> = []
+    const candidates = await this.discover(now, cutoff)
 
+    // A tracked file that discovery did not list this pass stays tracked while it is fresh.
+    const listed = new Set(candidates.map((c) => c.file))
+    for (const tf of [...this.files.values()]) {
+      if (listed.has(tf.file)) continue
+      const st = await statFresh(tf.file, cutoff)
+      if (st) candidates.push({ file: tf.file, source: tf.source, agentId: tf.agentId, parentId: tf.parentId, ...st })
+      else this.dropFile(tf.file)
+    }
+
+    let changed = false
+    for (;;) {
+      const round = await this.readRound(candidates)
+      // Across files, apply in timestamp order so Write-vs-edit and token deltas see history in order.
+      round.batch.sort((a, b) => (a.p.ts ?? 0) - (b.p.ts ?? 0))
+      const emit = this.initialized
+      for (const { tf, p } of round.batch) this.applyParsed(tf, p, emit)
+      changed = changed || round.batch.length > 0
+      if (!round.more || round.bytes === 0 || this.stopRequested) break
+      await yieldToEventLoop()
+    }
+
+    // Rejections are kept only while their file is still a candidate; a file that comes back is checked again.
+    const live = new Set(candidates.map((c) => c.file))
+    for (const f of [...this.rejected]) if (!live.has(f)) this.rejected.delete(f)
+    return changed
+  }
+
+  /**
+   * One bounded pass over the candidates: reads each changed or partly read file until the round's
+   * byte budget is spent. `more` says a later round has bytes to read.
+   */
+  private async readRound(candidates: Candidate[]): Promise<{ batch: Array<{ tf: TrackedFile; p: ParsedLine }>; bytes: number; more: boolean }> {
+    const batch: Array<{ tf: TrackedFile; p: ParsedLine }> = []
+    let budget = READ_ROUND_BYTES
+    let bytes = 0
     for (const c of candidates) {
+      if (budget <= 0) break
       if (this.rejected.has(c.file)) continue
       let tf = this.files.get(c.file)
       if (!tf) {
-        let mtime: number
-        try {
-          mtime = (await fsp.stat(c.file)).mtimeMs
-        } catch {
-          continue
-        }
-        if (mtime < cutoff) continue
         if (c.source === 'codex') {
           const cwd = await peekCodexCwd(c.file)
           if (cwd !== undefined && !isWithinRepo(cwd, this.repoRoot)) {
@@ -364,7 +425,8 @@ export class AgentHub extends EventEmitter {
           agentId: c.agentId,
           parentId: c.parentId,
           idFixed: c.source !== 'codex',
-          metaChecks: 0
+          metaChecks: 0,
+          backlog: false
         }
         this.files.set(c.file, tf)
       }
@@ -372,9 +434,17 @@ export class AgentHub extends EventEmitter {
         tf.metaChecks++
         tf.metaDescription = await this.readMetaDescription(tf.file)
       }
-      const lines = await this.tailer.read(c.file)
-      if (lines.length === 0) continue
-      const parsed = this.parseLines(tf, lines)
+      // Unchanged size and mtime (one stat, no open): nothing to read.
+      if (tf.size === c.size && tf.mtimeMs === c.mtimeMs && !tf.backlog) continue
+
+      const res = await this.tailer.readChunk(c.file, { maxBytes: budget })
+      budget -= res.bytes
+      bytes += res.bytes
+      tf.size = c.size
+      tf.mtimeMs = c.mtimeMs
+      tf.backlog = res.more
+      if (res.lines.length === 0) continue
+      const parsed = this.parseLines(tf, res.lines)
       if (parsed === null) {
         this.rejected.add(c.file)
         this.files.delete(c.file)
@@ -383,12 +453,18 @@ export class AgentHub extends EventEmitter {
       }
       for (const p of parsed) batch.push({ tf, p })
     }
+    const more = budget <= 0 || candidates.some((c) => this.files.get(c.file)?.backlog === true)
+    return { batch, bytes, more }
+  }
 
-    // Across files, apply in timestamp order so Write-vs-edit and token deltas see history in order.
-    batch.sort((a, b) => (a.p.ts ?? 0) - (b.p.ts ?? 0))
-    const emit = this.initialized
-    for (const { tf, p } of batch) this.applyParsed(tf, p, emit)
-    return batch.length > 0
+  /** Stops tracking a transcript. An agent with no transcript left in the window is forgotten too. */
+  private dropFile(file: string): void {
+    const tf = this.files.get(file)
+    this.files.delete(file)
+    this.tailer.forget(file)
+    if (!tf) return
+    for (const other of this.files.values()) if (other.agentId === tf.agentId) return
+    this.agents.delete(tf.agentId)
   }
 
   /** Parses new lines of one file. Returns null when the file's session cwd is outside the repo. */
@@ -555,8 +631,9 @@ export class AgentHub extends EventEmitter {
     if (this.initialized) this.scheduleAgentsEmit()
   }
 
-  private async discover(now: number): Promise<Candidate[]> {
-    const out: Candidate[] = []
+  /** Transcripts for this repo modified at or after `cutoff`. */
+  private async discover(now: number, cutoff: number): Promise<Candidate[]> {
+    const out: Listed[] = []
 
     const projectDirs = await claudeProjectDirsFor(this.repoRoot, this.claudeHome)
     for (const dir of projectDirs) {
@@ -592,7 +669,13 @@ export class AgentHub extends EventEmitter {
         }
       }
     }
-    return out
+    const stats = await Promise.all(out.map((c) => statFresh(c.file, cutoff)))
+    const fresh: Candidate[] = []
+    out.forEach((c, i) => {
+      const st = stats[i]
+      if (st) fresh.push({ ...c, ...st })
+    })
+    return fresh
   }
 
   /**

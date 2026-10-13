@@ -24,9 +24,14 @@ export function encodeClaudeProjectDir(cwd: string): string {
 /**
  * Existing project directories under `<claudeHome>/projects` that can hold sessions for
  * `repoRoot`: the root's own directory plus directories of sessions started in subfolders
- * (encoded name starts with the root's encoded name followed by '-').
+ * (encoded name starts with the root's encoded name followed by '-'). On Windows the names are
+ * compared case-insensitively, since the same folder can be recorded with different casing.
  */
-export async function claudeProjectDirsFor(repoRoot: string, claudeHome: string): Promise<string[]> {
+export async function claudeProjectDirsFor(
+  repoRoot: string,
+  claudeHome: string,
+  platform: NodeJS.Platform = process.platform
+): Promise<string[]> {
   const projects = path.join(claudeHome, 'projects')
   let names: string[]
   try {
@@ -34,10 +39,12 @@ export async function claudeProjectDirsFor(repoRoot: string, claudeHome: string)
   } catch {
     return []
   }
-  const encoded = encodeClaudeProjectDir(repoRoot.replace(/[\\/]+$/, ''))
+  const fold = platform === 'win32' ? (s: string) => s.toLowerCase() : (s: string) => s
+  const encoded = fold(encodeClaudeProjectDir(repoRoot.replace(/[\\/]+$/, '')))
   const out: string[] = []
   for (const name of names) {
-    if (name === encoded || name.startsWith(encoded + '-')) {
+    const folded = fold(name)
+    if (folded === encoded || folded.startsWith(encoded + '-')) {
       out.push(path.join(projects, name))
     }
   }

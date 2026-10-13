@@ -385,3 +385,112 @@ describe('unattributed filesystem changes', () => {
     expect(events.some((e) => e.agentId === S1 && e.file === 'src/late.ts')).toBe(true)
   })
 })
+
+describe('bounded refresh, pruning and lifecycle', () => {
+  let env: Env
+  let hub: AgentHub
+
+  beforeEach(() => {
+    env = setupEnv()
+    hub = new AgentHub({ repoRoot: env.repoRoot, claudeHome: env.claudeHome, codexHome: env.codexHome, pollMs: 600_000 })
+  })
+
+  afterEach(() => {
+    hub.stop()
+    vi.restoreAllMocks()
+    rmSync(env.tmp, { recursive: true, force: true })
+  })
+
+  const assistantLine = (uuid: string, text: string) =>
+    JSON.stringify({
+      type: 'assistant',
+      cwd: env.repoRoot,
+      sessionId: S1,
+      uuid,
+      timestamp: new Date().toISOString(),
+      message: {
+        model: 'claude-sonnet-4-5',
+        id: `msg_${uuid}`,
+        content: [{ type: 'text', text }],
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+      }
+    }) + '\n'
+
+  it('does not read a transcript whose size and mtime are unchanged', async () => {
+    await hub.start()
+    const read = vi.spyOn(hub['tailer'], 'readChunk')
+    await hub.refresh()
+    expect(read).not.toHaveBeenCalled()
+
+    const file = path.join(env.projDir, `${S1}.jsonl`)
+    appendFileSync(file, assistantLine('grow1', 'more'))
+    await hub.refresh()
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(read.mock.calls[0]?.[0]).toBe(file)
+  })
+
+  it('does not track transcripts older than the window', async () => {
+    await hub.start()
+    const stale = path.join(env.projDir, `${S5}.jsonl`)
+    expect(hub['files'].has(stale)).toBe(false)
+    expect(hub.getAgents().some((a) => a.id === S5)).toBe(false)
+  })
+
+  it('prunes a transcript that ages out and forgets its agent', async () => {
+    await hub.start()
+    const file = path.join(env.projDir, `${S1}.jsonl`)
+    expect(hub.getAgents().some((a) => a.id === S1)).toBe(true)
+    const old = (Date.now() - 100 * 24 * 3600 * 1000) / 1000
+    utimesSync(file, old, old)
+    await hub.refresh()
+    expect(hub['files'].has(file)).toBe(false)
+    expect(hub['tailer'].tracked()).not.toContain(file)
+    expect(hub.getAgents().some((a) => a.id === S1)).toBe(false)
+    // The subagent has its own transcript, still inside the window.
+    expect(hub.getAgents().some((a) => a.id === SUB)).toBe(true)
+  })
+
+  it('reads a backlog larger than one round in several bounded rounds', async () => {
+    await hub.start()
+    const big = path.join(env.projDir, 'S6-big.jsonl')
+    const text = 'x'.repeat(1000)
+    const rows = Array.from({ length: 5500 }, (_, i) => assistantLine(`big${i}`, text))
+    writeFileSync(big, rows.join(''))
+    const read = vi.spyOn(hub['tailer'], 'readChunk')
+    await hub.refresh()
+    expect(read.mock.calls.length).toBeGreaterThanOrEqual(2)
+    for (const r of read.mock.results) expect(((await r.value) as { bytes: number }).bytes).toBeLessThanOrEqual(4 * 1024 * 1024)
+    expect(byId(hub.getAgents(), 'S6-big').tokens.input).toBe(5500)
+  })
+
+  it('stop() during the initial load leaves no watchers, no poll timer and no emits', async () => {
+    const emits: AgentInfo[][] = []
+    hub.on('agents', (a: AgentInfo[]) => emits.push(a))
+    const intervals = vi.spyOn(globalThis, 'setInterval')
+    const started = hub.start()
+    hub.stop()
+    await started
+    expect(hub['watchers']).toHaveLength(0)
+    expect(hub['pollTimer']).toBeUndefined()
+    expect(intervals.mock.calls.filter((c) => c[1] === 600_000)).toHaveLength(0)
+    expect(emits).toHaveLength(0)
+  })
+
+  it('stop() after a normal start clears the watchers and the poll timer', async () => {
+    await hub.start()
+    expect(hub['watchers'].length).toBeGreaterThan(0)
+    expect(hub['pollTimer']).toBeDefined()
+    hub.stop()
+    expect(hub['watchers']).toHaveLength(0)
+    expect(hub['pollTimer']).toBeUndefined()
+  })
+
+  it('ignores filesystem changes after stop()', async () => {
+    await hub.start()
+    hub.stop()
+    const timeouts = vi.spyOn(globalThis, 'setTimeout')
+    hub.noteFsChange('src/after-stop.ts', 'change')
+    expect(timeouts.mock.calls.filter((c) => c[1] === 3000)).toHaveLength(0)
+  })
+})
+

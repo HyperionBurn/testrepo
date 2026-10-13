@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import * as path from 'node:path'
@@ -287,3 +287,63 @@ describe('parseCodexLine', () => {
     expect(parseCodexLine('[1,2]', codexCtx)).toBeNull()
   })
 })
+
+describe('apply_patch header parsing cost', () => {
+  it('stays fast on long whitespace runs inside File headers', () => {
+    const pad = ' '.repeat(200_000)
+    const body = [
+      '*** Begin Patch',
+      `*** Add File: src/a.ts${pad}tail`,
+      '+const a = 1',
+      `*** Update File: src/b.ts${pad}`,
+      `*** Move to: src/c.ts${pad}moved`,
+      '+x',
+      '*** End Patch'
+    ].join('\n')
+    const t0 = performance.now()
+    const events = parseApplyPatch(body, { repoRoot: REPO, agentId: 'codex-x' }, { id: 'm', ts: 1 })
+    const ms = performance.now() - t0
+    expect(ms).toBeLessThan(50)
+    expect(events.map((e) => e.type)).toEqual(['create', 'edit'])
+  })
+
+  it('still reads ordinary headers, with trailing spaces and CRLF', () => {
+    const body = '*** Update File: src/one.ts   \r\n+a\r\n-b\r\n*** Delete File: src/two.ts\r\n-c\r\n'
+    const events = parseApplyPatch(body, { repoRoot: REPO, agentId: 'codex-x' }, { id: 'm', ts: 1 })
+    expect(events.map((e) => [e.type, e.file, e.linesAdded, e.linesRemoved])).toEqual([
+      ['edit', 'src/one.ts', 1, 1],
+      ['delete', 'src/two.ts', 0, 1]
+    ])
+  })
+})
+
+describe('claudeProjectDirsFor platform handling', () => {
+  let home: string
+
+  beforeEach(() => {
+    home = mkdtempSync(path.join(tmpdir(), 'skyline-claude-home-'))
+    const projects = path.join(home, 'projects')
+    mkdirSync(projects, { recursive: true })
+    // Same folder recorded with different casing, plus a subfolder session.
+    mkdirSync(path.join(projects, 'c--users-me-repo'))
+    mkdirSync(path.join(projects, 'C--Users-Me-Repo-sub'))
+    mkdirSync(path.join(projects, 'C--Users-Me-Other'))
+  })
+
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  const names = (dirs: string[]): string[] => dirs.map((d) => path.basename(d))
+
+  it('matches project folder names case-insensitively on win32', async () => {
+    const dirs = await claudeProjectDirsFor('C:\\Users\\Me\\Repo', home, 'win32')
+    expect(names(dirs)).toEqual(['C--Users-Me-Repo-sub', 'c--users-me-repo'].sort())
+  })
+
+  it('matches exactly on other platforms', async () => {
+    const dirs = await claudeProjectDirsFor('C:\\Users\\Me\\Repo', home, 'linux')
+    expect(names(dirs)).toEqual(['C--Users-Me-Repo-sub'])
+  })
+})
+

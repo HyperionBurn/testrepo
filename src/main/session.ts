@@ -27,6 +27,8 @@ export class RepoSession extends EventEmitter {
   private readonly files = new Map<string, FileNode>()
   private readonly churn = new Map<string, number>()
   private history: GitCommit[] = []
+  /** Files sorted by path, copied from `files`. Rebuilt lazily after any change to `files`. */
+  private sortedFiles?: FileNode[]
   private isGit = false
   private readonly watcher: RepoWatcher
   private gitWatcher?: GitWatcher
@@ -53,15 +55,19 @@ export class RepoSession extends EventEmitter {
 
   private async init(): Promise<void> {
     this.isGit = await isGitRepo(this.root)
+    // dispose() can run during any await below: each step checks it before starting anything new.
+    if (this.disposed) return
     // Watch before scanning so nothing changed during the scan is missed. Change handling is queued
     // behind the initial scan, so every change applies to a loaded snapshot.
     this.watcher.on('change', (c: FsChange) => this.onChange(c))
     this.watcher.start()
     await this.enqueue(() => this.loadSnapshot())
+    if (this.disposed) return
     // The city opens on the scan alone. git log (the slow part on large repos) runs next, queued behind
     // the scan: refreshGit fills in churn and history, then emits 'history' and 'repo'.
     void this.enqueue(() => this.refreshGit()).catch(() => undefined)
     await this.startGitWatch()
+    if (this.disposed) return
 
     this.hub.on('agents', (a: AgentInfo[]) => {
       if (!this.disposed) this.emit('agents', a)
@@ -69,6 +75,7 @@ export class RepoSession extends EventEmitter {
     this.hub.on('event', (e: AgentEvent) => {
       if (!this.disposed) this.emit('event', e)
     })
+    // Loads in the background: open() does not wait for the agent history.
     this.hub.start().catch(() => undefined)
   }
 
@@ -90,6 +97,7 @@ export class RepoSession extends EventEmitter {
     const snap = await scanRepo(this.root, { history: [] })
     if (this.disposed) return
     for (const f of snap.files) this.files.set(f.path, f)
+    this.sortedFiles = undefined
     this.name = snap.name
     this.branch = snap.branch
     this.scannedAt = snap.scannedAt
@@ -100,8 +108,13 @@ export class RepoSession extends EventEmitter {
   }
 
   getSnapshot(): RepoSnapshot {
-    const files = [...this.files.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
-    return { root: this.root, name: this.name, branch: this.branch, files: files.map((f) => ({ ...f })), scannedAt: this.scannedAt }
+    if (!this.sortedFiles) {
+      this.sortedFiles = [...this.files.values()]
+        .map((f) => ({ ...f }))
+        .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    }
+    // A shallow copy of the array: callers get their own list, and IPC clones the nodes.
+    return { root: this.root, name: this.name, branch: this.branch, files: this.sortedFiles.slice(), scannedAt: this.scannedAt }
   }
 
   getAgents(): AgentInfo[] {
@@ -168,6 +181,7 @@ export class RepoSession extends EventEmitter {
       if (node) this.files.set(rel, node)
       else if (!this.files.delete(rel)) return
     }
+    this.sortedFiles = undefined
     this.scheduleRepoEmit()
   }
 
@@ -183,6 +197,7 @@ export class RepoSession extends EventEmitter {
     this.churn.clear()
     for (const [p, n] of churnCounts(history)) this.churn.set(p, n)
     for (const f of this.files.values()) f.commits = this.churn.get(f.path) ?? 0
+    this.sortedFiles = undefined
     this.branch = (await currentBranch(this.root)) ?? this.branch
     if (this.disposed) return
     this.emit('history', history.slice())
