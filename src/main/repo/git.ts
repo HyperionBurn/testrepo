@@ -65,6 +65,7 @@ export async function getHistory(root: string, limit = HISTORY_LIMIT): Promise<G
   const out = await runGit(root, [
     'log',
     '--numstat',
+    '--summary',
     '--no-renames',
     '--format=%x1e%H%x1f%at%x1f%an%x1f%s',
     `--max-count=${Math.max(1, Math.floor(limit))}`
@@ -85,21 +86,28 @@ export function parseGitLog(text: string): GitCommit[] {
     if (!/^[0-9a-f]{7,64}$/.test(hash)) continue
     const seconds = Number(at)
     const files: GitCommit['files'] = []
+    const created: string[] = []
     for (let i = headerIdx + 1; i < lines.length; i++) {
       const m = /^(-|\d+)\t(-|\d+)\t(.+)$/.exec(lines[i])
-      if (!m) continue
-      files.push({
-        path: unquoteGitPath(m[3]),
-        added: m[1] === '-' ? 0 : Number(m[1]),
-        removed: m[2] === '-' ? 0 : Number(m[2])
-      })
+      if (m) {
+        files.push({
+          path: unquoteGitPath(m[3]),
+          added: m[1] === '-' ? 0 : Number(m[1]),
+          removed: m[2] === '-' ? 0 : Number(m[2])
+        })
+        continue
+      }
+      // --summary lists files this commit creates: " create mode 100644 <path>".
+      const c = /^ create mode \d+ (.+)$/.exec(lines[i])
+      if (c) created.push(unquoteGitPath(c[1]))
     }
     commits.push({
       hash,
       ts: Number.isFinite(seconds) ? seconds * 1000 : 0,
       author,
       subject: subjectParts.join(FIELD_SEP),
-      files
+      files,
+      created
     })
   }
   return commits

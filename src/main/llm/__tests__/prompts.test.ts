@@ -83,7 +83,8 @@ describe('compaction limits', () => {
     ])
     const text = compactActivity(events, agents, T0 + 1e6, 20_000)
     expect(text.match(/^### /gm)?.length).toBeLessThanOrEqual(8)
-    expect(text).toMatch(/… 12 more agents not listed: 12 changes, 0 commands in total/)
+    expect(text).toMatch(/… more agents not listed/)
+    expect(text).not.toMatch(/\b\d+ (changes?|reads?|commands?|files?|dirs?|agents?|sections?)\b/)
   })
 
   it('groups the top files by directory and collapses the rest into a count', () => {
@@ -96,9 +97,10 @@ describe('compaction limits', () => {
     })
     const text = compactActivity(events, agents, T0 + 1e6, 20_000)
     expect(text.match(/- changed in `src\/dir\d\/`/g)?.length).toBeGreaterThan(0)
-    expect(text).toMatch(/- \+14 more files in \d+ dirs/)
+    expect(text).toContain('- more files changed in other folders')
     // Only the top 6 files appear individually.
-    expect(text.match(/ ×1/g)?.length).toBe(6)
+    const listed = text.split('\n').filter((l) => l.startsWith('- changed in ')).flatMap((l) => l.split(': ')[1].split(', '))
+    expect(listed).toHaveLength(6)
   })
 
   it('shows at most 4 commands and counts the remainder', () => {
@@ -113,7 +115,7 @@ describe('compaction limits', () => {
     )
     const text = compactActivity(events, agents, T0 + 1e6, 20_000)
     expect(text.match(/- ran `npm run step-/g)?.length).toBe(4)
-    expect(text).toContain('- +6 more distinct commands')
+    expect(text).toContain('- more commands not listed')
   })
 
   it('keeps only the last 2 messages per agent, each clipped to 200 characters', () => {
@@ -160,10 +162,12 @@ describe('buildDigestMessages', () => {
       { id: '2', agentId: 'agent-0', type: 'command', ts: T0 + 1000, text: 'npm test' }
     ]
     const msgs = buildDigestMessages({ events, agents: [agent(0)], repoName: 'acme', now: T0 + 60_000 })
-    expect(msgs.user).toContain('- changed in `src/`: a.ts ×1')
-    expect(msgs.user).toContain('ran `npm test` ×1')
+    expect(msgs.user).toContain('- changed in `src/`: a.ts')
+    expect(msgs.user).toContain('ran `npm test`')
     expect(msgs.user).not.toContain('omitted')
-    expect(msgs.user).toContain('Window: last 1m')
+    // The model gets no durations or counts to copy: the totals line is printed by the app.
+    expect(msgs.user).not.toContain('Window:')
+    expect(msgs.user).not.toMatch(/\b\d+ (changes?|reads?|commands?|files?|dirs?|agents?|sections?)\b/)
   })
 
   it('handles an empty log', () => {

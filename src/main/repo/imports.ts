@@ -61,17 +61,31 @@ function jsSpecifiers(src: string): string[] {
 }
 
 function resolveJs(dir: string, spec: string, fileSet: ReadonlySet<string>): string | undefined {
+  // The target is normalized once; every candidate below is built from it by appending an extension, so it
+  // is checked as is. Normalizing each candidate made import resolution the main cost of a large scan.
   const target = trimSlash(posix.normalize(posix.join(dir, spec)))
-  const candidates: string[] = [target]
-  for (const ext of JS_EXTS) candidates.push(target + ext)
+  const hit = (p: string): string | undefined => (p !== '' && fileSet.has(p) ? p : undefined)
+  let found = hit(target)
+  if (found !== undefined) return found
+  for (const ext of JS_EXTS) {
+    found = hit(target + ext)
+    if (found !== undefined) return found
+  }
   // TS convention: './util.js' refers to './util.ts' on disk.
   const stripped = /\.(m|c)?jsx?$/.exec(target)
   if (stripped) {
     const stem = target.slice(0, -stripped[0].length)
-    for (const ext of JS_EXTS) candidates.push(stem + ext)
+    for (const ext of JS_EXTS) {
+      found = hit(stem + ext)
+      if (found !== undefined) return found
+    }
   }
-  for (const ext of JS_EXTS) candidates.push(posix.join(target, 'index' + ext))
-  return firstExisting(candidates, fileSet)
+  const index = posix.join(target, 'index')
+  for (const ext of JS_EXTS) {
+    found = hit(index + ext)
+    if (found !== undefined) return found
+  }
+  return undefined
 }
 
 // ---- Python ----------------------------------------------------------------

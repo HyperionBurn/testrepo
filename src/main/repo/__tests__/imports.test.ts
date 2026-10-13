@@ -51,6 +51,19 @@ describe('extractImports: JS / TS', () => {
     const fs = files('src/lib/x.ts')
     expect(extractImports('src/app.ts', "import l from './lib'", fs)).toEqual([])
   })
+
+  it('resolves ".", directory index and .js-style specifiers from the repo root and nested folders', () => {
+    const fromRoot = files('index.ts', 'util.ts', 'pkg/index.js', 'pkg/mod.tsx')
+    expect(extractImports('main.ts', "import i from '.'\nimport u from './util.js'\nimport p from './pkg'", fromRoot)).toEqual([
+      'index.ts',
+      'pkg/index.js',
+      'util.ts'
+    ])
+    expect(extractImports('pkg/a.ts', "import m from './mod'\nimport x from '../util'", fromRoot)).toEqual([
+      'pkg/mod.tsx',
+      'util.ts'
+    ])
+  })
 })
 
 describe('extractImports: Python', () => {

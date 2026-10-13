@@ -42,6 +42,11 @@ describe('RepoSession live git refresh', () => {
 
     const session = await RepoSession.open(repo, { claudeHome, codexHome })
     try {
+      // The city opens on the scan; git history and churn follow in the background.
+      const deadline = Date.now() + 10_000
+      while ((await session.getHistory()).length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
       expect((await session.getHistory()).length).toBe(1)
       expect(session.getSnapshot().files.find((f) => f.path === 'src/a.ts')?.commits).toBe(1)
 

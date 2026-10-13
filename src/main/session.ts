@@ -53,12 +53,14 @@ export class RepoSession extends EventEmitter {
 
   private async init(): Promise<void> {
     this.isGit = await isGitRepo(this.root)
-    this.history = await getHistory(this.root, HISTORY_LIMIT)
     // Watch before scanning so nothing changed during the scan is missed. Change handling is queued
     // behind the initial scan, so every change applies to a loaded snapshot.
     this.watcher.on('change', (c: FsChange) => this.onChange(c))
     this.watcher.start()
     await this.enqueue(() => this.loadSnapshot())
+    // The city opens on the scan alone. git log (the slow part on large repos) runs next, queued behind
+    // the scan: refreshGit fills in churn and history, then emits 'history' and 'repo'.
+    void this.enqueue(() => this.refreshGit()).catch(() => undefined)
     await this.startGitWatch()
 
     this.hub.on('agents', (a: AgentInfo[]) => {
@@ -84,8 +86,8 @@ export class RepoSession extends EventEmitter {
   }
 
   private async loadSnapshot(): Promise<void> {
-    for (const [p, n] of churnCounts(this.history)) this.churn.set(p, n)
-    const snap = await scanRepo(this.root, { history: this.history })
+    // An empty history keeps scanRepo from running git log; churn arrives with refreshGit.
+    const snap = await scanRepo(this.root, { history: [] })
     if (this.disposed) return
     for (const f of snap.files) this.files.set(f.path, f)
     this.name = snap.name

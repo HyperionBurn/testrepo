@@ -28,16 +28,33 @@ describe('parseGitLog', () => {
         files: [
           { path: 'src/a.ts', added: 3, removed: 1 },
           { path: 'img/logo.png', added: 0, removed: 0 }
-        ]
+        ],
+        created: []
       },
       {
         hash: H2,
         ts: 1699990000000,
         author: 'Bob',
         subject: 'Fix: bug (#12)',
-        files: [{ path: 'src/a.ts', added: 0, removed: 2 }]
+        files: [{ path: 'src/a.ts', added: 0, removed: 2 }],
+        created: []
       }
     ])
+  })
+
+  it('reads the files a commit creates from --summary lines, and only those', () => {
+    const text = [
+      `\x1e${H1}\x1f1700000000\x1fAlice\x1fAdd things`,
+      '',
+      '10\t0\tsrc/new.ts',
+      '1\t1\tsrc/old.ts',
+      ' create mode 100644 src/new.ts',
+      ' create mode 100644 "src/with space.ts"',
+      ''
+    ].join('\n')
+    const [commit] = parseGitLog(text)
+    expect(commit.created).toEqual(['src/new.ts', 'src/with space.ts'])
+    expect(commit.files.map((f) => f.path)).toEqual(['src/new.ts', 'src/old.ts'])
   })
 
   it('keeps field separators that appear inside the subject', () => {

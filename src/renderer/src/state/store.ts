@@ -18,6 +18,7 @@ import {
   type ColorMode,
   type ColorPlan
 } from '../lib/colorModes'
+import { firstSeenByPath } from '../lib/firstSeen'
 
 export type Mode = 'live' | 'replay' | 'git';
 /** A capture that stages the camera: the framed city for a snapshot, or the orbit for a flyover. */
@@ -65,7 +66,7 @@ interface SkyState {
   setAgents(a: AgentInfo[]): void; pushEvent(e: AgentEvent): void; setEvents(e: AgentEvent[]): void;
   select(path: string | null): void; hover(path: string | null): void; focusAgent(id: string | null): void;
   setMode(m: Mode): void; setReplayTs(ts: number | null): void;
-  setCommits(c: GitCommit[]): void;                      // computes firstSeen (earliest commit ts per path)
+  setCommits(c: GitCommit[]): void;                      // computes firstSeen (see lib/firstSeen.ts)
   setGitTs(ts: number | null): void; toggleImports(): void;
   requestFrame(): void; setCapture(m: CaptureMode | null): void; setCaptureDpr(d: number | null): void;
   setColorMode(m: ColorMode): void; cycleColorMode(): void;
@@ -212,15 +213,7 @@ export const useSky = create<SkyState>()((set, get) => ({
   },
 
   setCommits(c) {
-    // Commits arrive newest first; firstSeen keeps the earliest commit ts per path.
-    const firstSeen: Record<string, number> = {}
-    for (const commit of c) {
-      for (const f of commit.files) {
-        const prev = firstSeen[f.path]
-        if (prev === undefined || commit.ts < prev) firstSeen[f.path] = commit.ts
-      }
-    }
-    set({ commits: c, firstSeen })
+    set({ commits: c, firstSeen: firstSeenByPath(c) })
   },
 
   setGitTs(ts) {

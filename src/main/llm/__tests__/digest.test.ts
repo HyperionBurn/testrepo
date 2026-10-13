@@ -79,9 +79,17 @@ describe('digestTotalsLine', () => {
 })
 
 describe('digest prompt', () => {
-  it('tells the model not to state numeric totals, because the app prints them', () => {
-    expect(DIGEST_SYSTEM).toMatch(/Do NOT state any numeric totals/)
+  it('tells the model not to write digits or count words, because the app prints the totals', () => {
+    expect(DIGEST_SYSTEM).toMatch(/Never write a digit/)
+    expect(DIGEST_SYSTEM).toMatch(/Do not use the words "edits", "commands"/)
     expect(DIGEST_SYSTEM).toMatch(/totals above your bullets/)
+  })
+
+  it('anchors each bullet to an agent name from the log and asks for file paths in backticks', () => {
+    expect(DIGEST_SYSTEM).toMatch(/Start each bullet with the name of the agent/)
+    expect(DIGEST_SYSTEM).toMatch(/Put every file path in backticks/)
+    // No example bullets: a small model copies them verbatim.
+    expect(DIGEST_SYSTEM).not.toMatch(/Format example/)
   })
 })
 

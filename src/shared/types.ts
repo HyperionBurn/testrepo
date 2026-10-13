@@ -57,7 +57,9 @@ export interface AgentEvent {
 }
 
 export interface GitCommit { hash: string; ts: number; author: string; subject: string;
-  files: { path: string; added: number; removed: number }[]; }
+  files: { path: string; added: number; removed: number }[];
+  /** Paths this commit creates. Absent when unknown; a file first appears at its creating commit. */
+  created?: string[]; }
 
 export interface Digest {
   generatedAt: number; text: string; model: string;
