@@ -12,7 +12,7 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "dist:win": "npm run build && electron-builder --win",
+    "dist:win": "node scripts/prepare-win-deps.mjs && npm run build && electron-builder --win nsis portable --x64 --publish never",
     "make-icon": "node scripts/make-icon.mjs",
     "postinstall": "electron-builder install-app-deps"
   },

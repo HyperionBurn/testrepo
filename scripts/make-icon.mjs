@@ -1,4 +1,4 @@
-// Generates resources/icon.png (512x512) and resources/icon.ico (single 256x256 PNG entry).
+// Generates resources/icon.png (512x512) and resources/icon.ico (PNG entries at 16, 24, 32, 48, 64, 128, 256).
 // Design: dark navy rounded square with five glowing cyan skyline bars. Pure Node, no image libs.
 // Usage: node scripts/make-icon.mjs
 import { deflateSync } from 'node:zlib'
@@ -151,22 +151,32 @@ function renderIcon(size) {
   return px
 }
 
-// ---- ICO container (single PNG entry) ------------------------------------
-function encodeIcoWithPng(size, png) {
+// ---- ICO container (one PNG-compressed entry per size) ---------------------
+// PNG-compressed ICO entries are valid for Windows Vista and later.
+const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+
+function encodeIco(images) {
+  // images: [{ size, png }], ascending by size
   const header = Buffer.alloc(6)
   header.writeUInt16LE(0, 0) // reserved
   header.writeUInt16LE(1, 2) // type: icon
-  header.writeUInt16LE(1, 4) // image count
-  const entry = Buffer.alloc(16)
-  entry[0] = size >= 256 ? 0 : size // width (0 means 256)
-  entry[1] = size >= 256 ? 0 : size // height
-  entry[2] = 0 // palette colors
-  entry[3] = 0 // reserved
-  entry.writeUInt16LE(1, 4) // color planes
-  entry.writeUInt16LE(32, 6) // bits per pixel
-  entry.writeUInt32LE(png.length, 8) // image data size
-  entry.writeUInt32LE(header.length + entry.length, 12) // offset of image data
-  return Buffer.concat([header, entry, png])
+  header.writeUInt16LE(images.length, 4) // image count
+
+  const directory = Buffer.alloc(16 * images.length)
+  let offset = header.length + directory.length
+  images.forEach(({ size, png }, i) => {
+    const entry = directory.subarray(i * 16, i * 16 + 16)
+    entry[0] = size >= 256 ? 0 : size // width (0 means 256)
+    entry[1] = size >= 256 ? 0 : size // height
+    entry[2] = 0 // palette colors
+    entry[3] = 0 // reserved
+    entry.writeUInt16LE(1, 4) // color planes
+    entry.writeUInt16LE(32, 6) // bits per pixel
+    entry.writeUInt32LE(png.length, 8) // image data size
+    entry.writeUInt32LE(offset, 12) // offset of image data
+    offset += png.length
+  })
+  return Buffer.concat([header, directory, ...images.map((img) => img.png)])
 }
 
 // ---- Main ---------------------------------------------------------------
@@ -175,7 +185,7 @@ mkdirSync(outDir, { recursive: true })
 const png512 = encodePng(512, 512, renderIcon(512))
 writeFileSync(resolve(outDir, 'icon.png'), png512)
 
-const png256 = encodePng(256, 256, renderIcon(256))
-writeFileSync(resolve(outDir, 'icon.ico'), encodeIcoWithPng(256, png256))
+const images = ICO_SIZES.map((size) => ({ size, png: encodePng(size, size, renderIcon(size)) }))
+writeFileSync(resolve(outDir, 'icon.ico'), encodeIco(images))
 
-console.log('wrote resources/icon.png (512x512) and resources/icon.ico (256x256 PNG entry)')
+console.log(`wrote resources/icon.png (512x512) and resources/icon.ico (${ICO_SIZES.join(', ')} px)`)

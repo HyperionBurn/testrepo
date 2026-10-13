@@ -3,10 +3,33 @@ productName: Skyline
 directories:
   output: release
   buildResources: resources
+# Only en-US Chromium locale packs (saves ~38 MB of the 55 shipped by Electron).
+electronLanguages:
+  - en-US
+compression: maximum
+# Nothing here needs a native rebuild: node-llama-cpp ships prebuilt binaries.
+npmRebuild: false
 files:
   - out/**
   - resources/**
   - "!**/*.map"
+  # node-llama-cpp: the Windows x64 package ships CPU (win-x64) and Vulkan (win-x64-vulkan) prebuilts.
+  # Everything else is excluded: other platforms, CUDA variants (multi-hundred MB), and the llama.cpp
+  # source/build tooling, which is only used for from-source builds. llama/grammars is kept because
+  # LlamaGrammar reads *.gbnf from it at runtime.
+  - "!**/node_modules/@node-llama-cpp/linux-*/**"
+  - "!**/node_modules/@node-llama-cpp/mac-*/**"
+  - "!**/node_modules/@node-llama-cpp/win-arm64/**"
+  - "!**/node_modules/@node-llama-cpp/*cuda*/**"
+  - "!**/node_modules/node-llama-cpp/llama/{addon,cmake,profiles,toolchains,xpack,patches}/**"
+  - "!**/node_modules/node-llama-cpp/llama/{gitRelease.bundle,CMakeLists.txt,.clang-format}"
+  # @reflink/reflink (used by ipull): keep only the Windows x64 binary.
+  - "!**/node_modules/@reflink/reflink-{linux,darwin,win32-arm64}-*/**"
+  # Renderer-only packages. Vite bundles everything the renderer uses, and the main process needs only
+  # electron, chokidar and node-llama-cpp (plus their own deps). Verified: the runtime closure of those
+  # three packages does not include any name below. Trims app.asar by ~70 MB.
+  - "!node_modules/{@react-three,@react-spring,@use-gesture,@mediapipe,@monogrid,@tweenjs,@dimforge,@types}/**"
+  - "!node_modules/{three,three-stdlib,three-mesh-bvh,troika-three-text,troika-three-utils,troika-worker-utils,webgl-constants,webgl-sdf-generator,stats-gl,stats.js,hls.js,draco3d,meshline,meshoptimizer,maath,n8ao,glsl-noise,postprocessing,potpack,camera-controls,bidi-js,detect-gpu,fflate,promise-worker-transferable,suspend-react,its-fine,tunnel-rat,react-composer,react-use-measure,react-reconciler,react-is,scheduler,prop-types,use-sync-external-store,utility-types,csstype,zustand,@babel/runtime,base64-js,buffer,ieee754,immediate,is-promise,lie,js-tokens,loose-envify,object-assign,require-from-string,cross-env}/**"
 asarUnpack:
   - "**/node_modules/node-llama-cpp/**"
   - "**/node_modules/@node-llama-cpp/**"
