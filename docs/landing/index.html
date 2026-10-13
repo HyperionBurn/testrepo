@@ -313,6 +313,8 @@
   .feature-shot--city img { object-position: 50% 62%; }
   .feature-shot--inspector img { object-fit: cover; object-position: 80% 50%; }
   .feature-shot--welcome img { object-fit: cover; object-position: 50% 50%; }
+  .feature-shot--snapshot { aspect-ratio: 1920 / 1350; }
+  .feature-shot--snapshot img { object-fit: cover; object-position: 50% 50%; }
 
   /* ---- Privacy --------------------------------------------------------- */
 
@@ -520,7 +522,7 @@
           </ul>
         </div>
         <div class="feature-shot feature-shot--city">
-          <img src="../screenshots/city.png" width="1280" height="873" loading="lazy" alt="Close view of the glowing city showing agent drones over several districts, with the agent dock and activity timeline on screen.">
+          <img src="../screenshots/real-city.png" width="1280" height="900" loading="lazy" alt="Skyline open on its own repository: the agent dock lists each Claude Code session with its live tokens and cost, and the city is colored by neighborhood.">
         </div>
       </article>
 
@@ -535,7 +537,22 @@
           </ul>
         </div>
         <div class="feature-shot feature-shot--welcome">
-          <img src="../screenshots/welcome.png" width="1440" height="900" loading="lazy" alt="Skyline welcome screen: Watch your agents build, with buttons to open a repository or try the demo city.">
+          <img src="../screenshots/welcome.png" width="1280" height="900" loading="lazy" alt="Skyline welcome screen: Watch your agents build, with buttons to open a repository or try the demo city.">
+        </div>
+      </article>
+
+      <article class="feature glass feature--reverse">
+        <div class="feature-copy">
+          <h3>Share your city.</h3>
+          <p>Press S for a snapshot: a branded PNG of the framed city with a stats card, copied straight to your clipboard. Press Shift+S for a 10-second flyover video of the orbit.</p>
+          <ul>
+            <li>Stats card with agents, edits, files and cost for the open repo</li>
+            <li>Paste the PNG into a post, a chat or a pull request</li>
+            <li>Flyover saved as WebM, ready to share</li>
+          </ul>
+        </div>
+        <div class="feature-shot feature-shot--snapshot">
+          <img src="../screenshots/snapshot-card.png" width="1920" height="1350" loading="lazy" alt="Snapshot of the Skyline repository: a glowing city with a frosted stats card at bottom left showing agents, edits, files and cost, and the Skyline wordmark at bottom right.">
         </div>
       </article>
     </div>

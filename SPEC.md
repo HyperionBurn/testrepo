@@ -36,8 +36,10 @@ src/preload/   index.ts  → window.skyline (SkylineAPI)
 src/renderer/src/
                App.tsx, state/ (zustand store), city/ (three scene: City.tsx, Buildings.tsx,
                Drones.tsx, Trails.tsx, Ground.tsx, Effects.tsx, CameraRig.tsx),
+               city/labelLayout.ts (neighborhood label placement), lib/colorModes.ts (color modes),
+               lib/capture.ts + lib/snapshotCard.ts (snapshot and flyover),
                hud/ (glass UI: TitleBar, AgentDock, ActivityFeed, Timeline, Inspector,
-               DigestCard, DispatchSheet, CommandBar, Welcome), styles/glass.css
+               DigestCard, DispatchSheet, CommandBar, Welcome, ColorLegend, Capture), styles/glass.css
 ```
 
 ## Contract — `src/shared/types.ts`
@@ -131,7 +133,8 @@ export interface SkylineAPI {
   on(channel: 'llm', cb: (s: LlmStatus) => void): () => void;
   on(channel: 'digest', cb: (d: Digest) => void): () => void;       // late model digest; requestId says which digest() call it answers
   on(channel: 'history', cb: (c: GitCommit[]) => void): () => void; // after HEAD, a ref or the reflog moved (debounced 1s)
-  saveCapture(data: Uint8Array, suggestedName: string): Promise<string | null>; // capture feature (lands with the capture work): save dialog; resolves with the saved path, null if cancelled
+  saveCapture(data: Uint8Array, suggestedName: string, copy?: boolean): Promise<string | null>; // save dialog, or SKYLINE_CAPTURE_DIR; copy: also put a PNG on the clipboard; resolves with the saved path, null if cancelled
+  flyoverSeconds?: number;                                    // SKYLINE_FLYOVER_SECONDS (test hook); undefined in normal runs
   window: { minimize(): void; maximize(): void; close(): void };
   platform: string;
   autoOpen(): Promise<string | null>;                         // repo path from the SKYLINE_OPEN env var, if set; the renderer opens it at start
@@ -208,6 +211,68 @@ opus 15/75/1.5/18.75 · sonnet 3/15/0.3/3.75 · haiku 1/5/0.1/1.25 · gpt-5/code
 - Building height h = 0.6 + 2.2·log2(1 + loc/20). Footprint from treemap cell.
 - Deterministic: same snapshot → same layout. Sort children by name for stability.
 - Total city ~ 120×120 units regardless of repo size (scale treemap).
+- Naming: each district plate is named by its full repo-relative directory (`src/renderer`). A building's
+  `district` field is the top-level directory (`src`), or `''` for root files. Neighborhood labels use the
+  plate names, so they are not the same as `district` (see Neighborhoods and Labels below).
+
+## Neighborhoods (`src/shared/layout.ts`, pure + tested)
+A neighborhood is the directory that groups files for coloring and labeling, so a repo that keeps everything under
+`src/` still reads as several areas.
+- `neighborhoodChain(paths)` finds the directory chain that defines them. Starting at the root, it descends into the
+  largest subdirectory while that directory holds more than `NEIGHBORHOOD_SHARE` (0.7) of all files, for at most
+  `NEIGHBORHOOD_LEVELS` (3) levels. A descent is kept only if it splits the files into at least two neighborhoods;
+  trailing levels that do not are dropped.
+- `neighborhoodOf(path, chain)` keys a file to the next directory below the deepest chain entry above it. A file
+  sitting directly in the deepest chain directory keys to that directory. Root files key to `''`.
+- `neighborhoodIndex(paths)` returns `{ chain, keyOf, groups }`. Groups are sorted by file count, largest first, ties by key.
+- Example from the tests: with `src/main/*`, `src/renderer/*`, `src/shared/*`, `src/index.ts`, `docs/a.md` and
+  `README.md`, `src` holds 6 of 8 files, so the chain is `['src']`. The neighborhoods are `src/main`,
+  `src/renderer`, `src/shared`, `src`, `docs` and `''`. A flat folder with five files has an empty chain and
+  stays one neighborhood.
+
+## Labels on the ground (`src/renderer/src/city/labelLayout.ts`, `Ground.tsx`)
+- Each label is a neighborhood's full path, for example `src/renderer` and not the top-level name `src`. It is
+  canvas-rendered flat on the neighborhood's plate, glowing in its area hue. Root files have no plate, so no label.
+- Placement goes largest plate first. A neighborhood whose plate contains another neighborhood is skipped (its center
+  belongs to the children). Label height is `clamp(0.08 · √plateArea, 1.4, 8)` world units, capped at half the plate
+  depth, and the label is at most 80% of the plate width. A label under 0.8 units is skipped, and so is one that
+  overlaps a label already placed (0.6-unit gap). At most 30 labels.
+- Labels ignore depth, so towers in front do not hide them. They fade with distance and with on-screen size.
+
+## Color modes (`src/renderer/src/lib/colorModes.ts`)
+- Four modes in `C` cycle order: `area` (default), `language`, `churn`, `age`. The Command bar has a
+  "Color by …" action for each. The choice is kept in `localStorage` (`skyline.colorMode`), a per-viewer convenience.
+- **Area:** one hue per neighborhood from `AREA_PALETTE` (ten hues). Hues go to neighborhoods in size order, so the
+  largest is gold. Root files stay silver (`#C4CDD9`). Neighborhood labels use these hues in every mode.
+- **Language:** each building takes its `LANG_COLORS` entry from `shared/lang.ts`.
+- **Churn:** `FileNode.commits`, percentile-ranked from indigo through cyan and amber to magenta. Without git history
+  every building sits at the cold end, and the legend reads "No git history, so churn is unknown".
+- **Age:** `FileNode.mtime`, percentile-ranked from dim slate (untouched longest) to bright mint (changed most recently).
+- Percentile rank: the smallest value maps to 0, the largest to 1, ties share the mean of their positions, and a
+  single value maps to 0.5.
+- Legend (`hud/ColorLegend.tsx`): a bottom-right chip with the top six entries of the mode. Those are neighborhoods
+  by file count, languages by file count, or the most committed or most recently changed files. Clicking the chip
+  cycles the mode, as `C` does.
+
+## Capture (`src/renderer/src/lib/capture.ts`, `src/main/ipc.ts`)
+Capture needs an open repo. It starts from `S` (snapshot), `Shift`+`S` (flyover) or the title bar's Capture menu. A
+progress pill shows while it runs. `Esc` cancels a flyover, and other keys are ignored until the capture finishes.
+- **Snapshot:** frames the whole city and renders it at a pixel ratio that makes the image at least 1920 px wide
+  (capped at 2.5). It waits for the camera to settle, then composes a frosted stats card bottom-left: repo name,
+  agents, edits, files touched, cost, and up to five agent color chips with "+N" for the rest. The Skyline wordmark
+  sits bottom-right. The PNG is saved as `Skyline-<repo>-<YYYY-MM-DD>.png` and copied to the clipboard. A grab that
+  does not render within 8 s fails with a toast.
+- **Flyover:** records the city canvas with `MediaRecorder` at 60 fps and 8 Mbps, as VP9 WebM (VP8 if VP9 is
+  unavailable). The camera orbits once, from a high shot down into the framed view, for `FLYOVER_SECONDS` (10). The
+  file is `Skyline-<repo>-<YYYY-MM-DD>.webm`.
+- **Save:** the renderer sends the bytes over IPC to `saveCapture(data, suggestedName, copy?)`. The main process caps
+  captures at 256 MB, sanitizes the name and, for a PNG with `copy`, puts it on the clipboard. Otherwise a save dialog
+  opens (default folder Pictures or Videos), and the saved file is revealed in its folder. It resolves with the saved
+  path, or `null` if the dialog was cancelled.
+- **Test hooks:** `SKYLINE_CAPTURE_DIR` writes the capture straight into that directory, with no dialog and no reveal
+  (the clipboard copy still happens). `SKYLINE_FLYOVER_SECONDS` takes a positive number, which the preload reads and
+  exposes as `flyoverSeconds` to shorten or lengthen the flyover. The Capture menu label still says 10 s. Both are
+  unset in normal runs.
 
 ## Design — "Liquid Glass"
 - The 3D city fills the window edge-to-edge; all UI floats above it as glass.
@@ -226,7 +291,8 @@ opus 15/75/1.5/18.75 · sonnet 3/15/0.3/3.75 · haiku 1/5/0.1/1.25 · gpt-5/code
   touched it, recent events, "Explain" via local LLM, file preview);
   bottom **Timeline** capsule (Live ⟷ replay scrubber over agent events; toggle Git time-lapse);
   top-center **Command bar** (⌘K/Ctrl+K: jump to file, dispatch agent, digest);
-  **Digest card** ("While you were away…").
+  **Digest card** ("While you were away…"); bottom-right **color legend** chip (see Color modes); a **capture pill**
+  with progress while a snapshot or flyover runs. The title bar's **Capture** menu starts both (see Capture).
 - Welcome screen (no repo): city silhouette idling in background, "Open a repository",
   "Recent agent activity" (one row per working directory from `listSessions`, newest first, max 6),
   and "Recent" (saved repos). A repo already in "Recent agent activity" is not repeated under

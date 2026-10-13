@@ -8,7 +8,7 @@ The founding story, used across the kit: the app was built overnight by six AI a
 
 ## 1. X / Twitter threads
 
-Three drafts. Each post is under 280 characters. Post the first one by default and keep the others for follow-ups or A/B testing. Attach the 20-second demo to post 1.
+Five drafts. Each post is under 280 characters. Post the first one by default and keep the others for follow-ups or A/B testing. Attach the 20-second demo to post 1. Drafts D and E are the share loop: they point at the Snapshot (S) and Flyover (Shift+S) that Skyline saves for a user to repost.
 
 ### Draft A: the story (default)
 
@@ -90,6 +90,24 @@ Digests and explanations come from a local model (Qwen2.5-Coder 1.5B, one option
 MIT licensed, Windows x64, 100% local. Built overnight by six AI agents, and Skyline watched them do it.
 
 [LINK]
+
+### Draft D: the share loop, snapshot (attach docs/screenshots/snapshot-card.png)
+
+Skyline watched the AI agents that built it.
+
+Press S and it saves a branded city card of your repo, with agents, edits, files and cost. It is copied to your clipboard, ready to paste.
+
+Free and open source: [LINK]
+
+### Draft E: the share loop, flyover (attach the 10-second flyover WebM)
+
+Shift+S records a 10-second flyover of your repo as a city, while your agents are still editing it.
+
+Each drone is an agent. Each pulse is a file being changed.
+
+100% local, MIT licensed: [LINK]
+
+Draft E needs a flyover recorded from the app. The repo does not have one yet.
 
 ---
 
