@@ -7,6 +7,7 @@ import { compactNumber, middleEllipsis, modelShort, relativeTime, usd } from '..
 import { useNow } from '../lib/hooks'
 import { FS_AGENT } from '../city/data'
 import { isActive, StatusPill } from './meta'
+import { sortDockAgents } from './dockOrder'
 import { ActivityFeed } from './ActivityFeed'
 import { IconDoc, IconPlus, IconSidebar, IconSparkle } from './icons'
 
@@ -155,7 +156,8 @@ function AgentList({ agents, now }: { agents: AgentInfo[]; now: number }) {
   const children = new Map<string, AgentInfo[]>()
   const roots: AgentInfo[] = []
   for (const a of agents) {
-    if (a.parentId && byId.has(a.parentId)) {
+    // The filesystem pseudo-agent never nests under a parent: it is always a top-level card, last.
+    if (a.id !== FS_AGENT && a.parentId && byId.has(a.parentId)) {
       const list = children.get(a.parentId) ?? []
       list.push(a)
       children.set(a.parentId, list)
@@ -163,11 +165,11 @@ function AgentList({ agents, now }: { agents: AgentInfo[]; now: number }) {
       roots.push(a)
     }
   }
-  roots.sort(byRecency)
+  const ordered = sortDockAgents(roots, FS_AGENT)
 
   return (
     <>
-      {roots.map((a) => {
+      {ordered.map((a) => {
         const kids = (children.get(a.id) ?? []).sort(byRecency)
         return (
           <div key={a.id} className="dock__group">
@@ -216,7 +218,7 @@ export function AgentDock() {
   const activeCount = agents.filter((a) => isActive(a.status)).length
 
   if (collapsed) {
-    const sorted = agents.slice().sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+    const sorted = sortDockAgents(agents, FS_AGENT)
     return (
       <aside className="dock dock--collapsed glass" aria-label="Agents">
         <div className="dock__head" style={{ justifyContent: 'center', padding: '10px 0', minHeight: 0 }}>

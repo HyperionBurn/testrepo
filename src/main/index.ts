@@ -1,6 +1,7 @@
 import { app, BrowserWindow, type BrowserWindowConstructorOptions } from 'electron'
 import { join } from 'node:path'
 import { disposeIpc, registerIpc } from './ipc'
+import { createQuitGate } from './quit'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -61,7 +62,13 @@ if (!gotLock) {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  app.on('before-quit', () => {
-    disposeIpc()
+  // Quit waits for the LLM's native objects to be freed (see quit.ts). A stuck dispose cannot block quit for long.
+  const quitGate = createQuitGate({
+    dispose: disposeIpc,
+    quit: () => app.quit(),
+    timeoutMs: 3000,
+    onTimeout: () => console.warn('[skyline] LLM did not finish disposing within 3s; quitting anyway'),
+    onError: (err) => console.error('[skyline] LLM dispose failed', err)
   })
+  app.on('before-quit', (event) => quitGate.onBeforeQuit(event))
 }

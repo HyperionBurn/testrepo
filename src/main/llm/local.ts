@@ -80,6 +80,8 @@ export class LocalLlm extends EventEmitter {
   private downloading?: Promise<void>
   private downloader?: ModelDownloader
   private queue: Promise<unknown> = Promise.resolve()
+  /** Controller of the generation running now, so dispose() can stop it instead of waiting for it. */
+  private inFlight?: AbortController
   private disposed = false
 
   constructor(opts: LocalLlmOptions) {
@@ -191,10 +193,14 @@ export class LocalLlm extends EventEmitter {
     })
   }
 
-  /** Waits for in-flight work, cancels a download, and frees the native model and context. */
+  /**
+   * Stops the generation in flight, cancels a download, and frees the native objects in dependency order:
+   * sequence, context, model, then llama. Resolves once all of them are freed.
+   */
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    this.inFlight?.abort(new Error('LocalLlm is disposing'))
     try {
       await this.downloader?.cancel()
     } catch {
@@ -346,6 +352,7 @@ export class LocalLlm extends EventEmitter {
     const { LlamaChatSession } = await import('node-llama-cpp')
     const session = new LlamaChatSession({ contextSequence: sequence, systemPrompt: system })
     const controller = new AbortController()
+    this.inFlight = controller
     const timer = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS)
     try {
       const raw = await session.prompt(user, {
@@ -364,6 +371,7 @@ export class LocalLlm extends EventEmitter {
       return text
     } finally {
       clearTimeout(timer)
+      if (this.inFlight === controller) this.inFlight = undefined
       await session.dispose()
     }
   }

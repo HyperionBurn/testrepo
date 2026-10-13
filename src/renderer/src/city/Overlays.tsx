@@ -65,8 +65,8 @@ function Cage({ src, layout }: { src: DroneSource; layout: CityLayout }) {
   })
 
   if (!b) return null
-  const c = visCenter(b)
-  const H = visHeight(b)
+  const c = visCenter(b, layout)
+  const H = visHeight(b, layout)
   return (
     <group position={[c.x, c.y, c.z]} scale={[b.w * 1.06, H * 1.02, b.d * 1.06]}>
       <lineSegments geometry={edges} material={lineMat} />
@@ -112,12 +112,12 @@ export function Spotlight() {
   const layout = useSky((s) => s.layout)
   const selectedPath = useSky((s) => s.selectedPath)
   const b = useMemo(() => (layout && selectedPath ? findBuilding(layout, selectedPath) : undefined), [layout, selectedPath])
-  if (!b) return null
-  return <SpotlightAt key={b.path} b={b} />
+  if (!b || !layout) return null
+  return <SpotlightAt key={b.path} b={b} layout={layout} />
 }
 
-function SpotlightAt({ b }: { b: CityBuilding }) {
-  const height = visHeight(b) + 26
+function SpotlightAt({ b, layout }: { b: CityBuilding; layout: CityLayout }) {
+  const height = visHeight(b, layout) + 26
   const radius = Math.max(b.w, b.d) * 0.7 + 3
   const coneGeo = useMemo(() => new ConeGeometry(radius, height, 40, 1, true), [radius, height])
   const coneMat = useMemo(() => new ShaderMaterial({
@@ -146,7 +146,7 @@ function SpotlightAt({ b }: { b: CityBuilding }) {
     poolMat.dispose()
   }, [coneGeo, coneMat, poolGeo, poolMat])
 
-  const c = visCenter(b)
+  const c = visCenter(b, layout)
   return (
     <>
       <mesh geometry={coneGeo} material={coneMat} position={[c.x, height / 2, c.z]} />
@@ -192,25 +192,25 @@ export function ImportArcs() {
 
   return (
     <>
-      {arcs.map((a) => (
-        <Arc key={a.key} arc={a} />
+      {layout && arcs.map((a) => (
+        <Arc key={a.key} arc={a} layout={layout} />
       ))}
     </>
   )
 }
 
-function Arc({ arc }: { arc: Arc }) {
+function Arc({ arc, layout }: { arc: Arc; layout: CityLayout }) {
   const ref = useRef<Object3D & { material?: { dashOffset?: number } }>(null)
-  const a = visCenter(arc.from)
-  const b = visCenter(arc.to)
+  const a = visCenter(arc.from, layout)
+  const b = visCenter(arc.to, layout)
   const dx = b.x - a.x
   const dz = b.z - a.z
   const dist = Math.hypot(dx, dz)
-  const start: [number, number, number] = [a.x, visHeight(arc.from) + 0.4, a.z]
-  const end: [number, number, number] = [b.x, visHeight(arc.to) + 0.4, b.z]
+  const start: [number, number, number] = [a.x, visHeight(arc.from, layout) + 0.4, a.z]
+  const end: [number, number, number] = [b.x, visHeight(arc.to, layout) + 0.4, b.z]
   const mid: [number, number, number] = [
     (a.x + b.x) / 2,
-    Math.max(visHeight(arc.from), visHeight(arc.to)) + 4 + dist * 0.22,
+    Math.max(visHeight(arc.from, layout), visHeight(arc.to, layout)) + 4 + dist * 0.22,
     (a.z + b.z) / 2
   ]
   useFrame(({ clock }) => {

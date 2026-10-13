@@ -4,7 +4,7 @@
 import { BoxGeometry, Color, InstancedBufferAttribute, InstancedMesh, type MeshStandardMaterial } from 'three'
 import type { CityLayout } from '@shared/types'
 import type { Heat, Mode } from '../state/store'
-import { towerHeight } from './geom'
+import { visHeight } from './geom'
 
 /** Seconds for a touch glow to fade from 1 to 0. */
 export const HEAT_DECAY_S = 25
@@ -80,11 +80,11 @@ export class BuildingField {
       slots.push({
         path: b.path,
         x: b.x, z: b.z, w: b.w, d: b.d,
-        baseH: towerHeight(b.h),
+        baseH: visHeight(b, layout),
         // Buildings that survive keep their height and shimmer; new ones rise from the ground with a shimmer.
         h: old ? old.h : 0,
         v: old ? old.v : 0,
-        target: towerHeight(b.h),
+        target: visHeight(b, layout),
         shim: old ? old.shim : 1,
         seed: hashSeed(b.path),
         ghost: false,

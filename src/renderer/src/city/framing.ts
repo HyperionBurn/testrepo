@@ -67,7 +67,7 @@ export function maxBuildingHeight(layout: CityLayout): number {
   const cached = towerCache.get(layout)
   if (cached !== undefined) return cached
   let max = 0
-  for (const b of layout.buildings) max = Math.max(max, visHeight(b))
+  for (const b of layout.buildings) max = Math.max(max, visHeight(b, layout))
   const value = max > 0 ? max : DEFAULT_MAX_HEIGHT
   towerCache.set(layout, value)
   return value

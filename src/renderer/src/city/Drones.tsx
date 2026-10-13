@@ -212,9 +212,9 @@ function Drone({ src }: { src: DroneSource }) {
     const active = !!b && s.status !== 'idle'
 
     // Where the drone wants to be.
-    if (active && b) {
-      const c = visCenter(b)
-      target.set(c.x, visHeight(b) + HOVER_ABOVE_ROOF + Math.sin(t * 1.7 + phase) * 0.3, c.z)
+    if (active && b && L) {
+      const c = visCenter(b, L)
+      target.set(c.x, visHeight(b, L) + HOVER_ABOVE_ROOF + Math.sin(t * 1.7 + phase) * 0.3, c.z)
     } else {
       if (state.centerFile !== s.file) {
         state.center = districtCenter(L, s.file)
@@ -275,9 +275,9 @@ function Drone({ src }: { src: DroneSource }) {
     const beam = beamRef.current
     if (beam) {
       beam.visible = working
-      if (working && b) {
-        const c = visCenter(b)
-        beam.position.set(c.x, visHeight(b), c.z)
+      if (working && b && L) {
+        const c = visCenter(b, L)
+        beam.position.set(c.x, visHeight(b, L), c.z)
         const dir = new Vector3().subVectors(pos, beam.position)
         const len = Math.max(0.01, dir.length())
         dir.normalize()
@@ -291,9 +291,9 @@ function Drone({ src }: { src: DroneSource }) {
     const pts = pointsRef.current
     if (pts) {
       pts.visible = working && s.status === 'editing' && !!b
-      if (pts.visible && b) {
+      if (pts.visible && b && L) {
         const arr = particleGeo.getAttribute('position') as BufferAttribute
-        const c = visCenter(b)
+        const c = visCenter(b, L)
         for (let i = 0; i < PARTICLES; i++) {
           state.ages[i] = (state.ages[i] ?? 0) + dt
           if ((state.ages[i] ?? 0) > (state.lives[i] ?? 0) || state.lives[i] === 0) {
@@ -303,7 +303,7 @@ function Drone({ src }: { src: DroneSource }) {
             arr.setXYZ(
               i,
               c.x + (Math.random() - 0.5) * b.w * 0.8,
-              visHeight(b),
+              visHeight(b, L),
               c.z + (Math.random() - 0.5) * b.d * 0.8
             )
           } else {

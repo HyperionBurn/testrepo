@@ -321,8 +321,8 @@ export function CameraRig() {
         if (p.kind === 'drone') return getDroneVec(p.id) ?? null
         const L = useSky.getState().layout
         const b = L ? findBuilding(L, p.path) : undefined
-        if (!b) return null
-        const c = visCenter(b)
+        if (!L || !b) return null
+        const c = visCenter(b, L)
         return scratch.tmp.set(c.x, c.y * 0.6, c.z)
       }
       const first = getTarget()

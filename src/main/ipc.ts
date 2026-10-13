@@ -295,15 +295,15 @@ async function saveCapture(win: BrowserWindow, data: unknown, suggestedName: unk
 }
 
 /**
- * Stops the open session and the LLM. Called on app quit. Dispatched agents are user work and keep
- * running; their pids are logged so they can be found afterwards.
+ * Stops the open session and the LLM. Called on app quit, which waits for the returned promise (see quit.ts).
+ * Dispatched agents are user work and keep running; their pids are logged so they can be found afterwards.
  */
-export function disposeIpc(): void {
+export async function disposeIpc(): Promise<void> {
   for (const r of runningDispatched()) {
     console.info(`[skyline] leaving ${r.kind} agent ${r.id} running, pid ${r.pid ?? 'unknown'}, cwd ${r.cwd}`)
   }
   disposeSession()
   const instance = llm
   llm = undefined
-  instance?.dispose().catch(() => undefined)
+  await instance?.dispose()
 }
