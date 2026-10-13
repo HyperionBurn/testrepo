@@ -205,6 +205,16 @@ describe('buildLayout invariants (60-file nested repo)', () => {
     expect(buildLayout(snapshot(fixtureFiles()))).toEqual(layout)
   })
 
+  it('does not depend on the order files arrive in', () => {
+    expect(buildLayout(snapshot([...files].reverse()))).toEqual(layout)
+  })
+
+  it('keeps district plates reasonably square (worst aspect ratio at least 0.2)', () => {
+    let worst = 1
+    for (const d of layout.districts) worst = Math.min(worst, Math.min(d.w, d.d) / Math.max(d.w, d.d))
+    expect(worst).toBeGreaterThanOrEqual(0.2)
+  })
+
   it('finds buildings by path, normalizing separators and a leading ./', () => {
     const hit = findBuilding(layout, 'src/shared/layout.ts')
     expect(hit?.path).toBe('src/shared/layout.ts')
