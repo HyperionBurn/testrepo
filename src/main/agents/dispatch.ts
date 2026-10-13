@@ -19,8 +19,10 @@ const CODEX_LINK_TIMEOUT_MS = 60_000
 const CODEX_LINK_POLL_MS = 500
 const KILL_ESCALATE_MS = 3_000
 const MAX_PROMPT_CHARS = 100_000
-/** cmd.exe rejects command lines longer than 8191 characters; leave room for the rest of the line. */
-const WIN_MAX_PROMPT_CHARS = 7000
+/** Fixed argv. The prompt never goes on the command line: it is written to the child's stdin. */
+const CLAUDE_ARGS = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits'] as const
+/** `-` makes codex read the prompt from stdin. */
+const CODEX_ARGS = ['exec', '--full-auto', '-'] as const
 /** The session id is in the first stream-json lines, so the head of the log is enough. */
 const LOG_HEAD_BYTES = 64 * 1024
 const ERROR_LOG_CHARS = 2000
@@ -78,9 +80,6 @@ export async function dispatchAgent(root: string, req: DispatchRequest, opts: Di
   const prompt = typeof req.prompt === 'string' ? req.prompt.trim() : ''
   if (!prompt) throw new Error('Prompt is empty')
   if (prompt.length > MAX_PROMPT_CHARS) throw new Error('Prompt is too long')
-  if (process.platform === 'win32' && prompt.length > WIN_MAX_PROMPT_CHARS) {
-    throw new Error('Prompt is too long for a Windows command line (about 7000 characters max)')
-  }
 
   const bin = req.kind === 'claude-code' ? 'claude' : 'codex'
   if (!(await findOnPath(bin))) throw new Error(req.kind === 'claude-code' ? CLAUDE_HINT : CODEX_HINT)
@@ -120,11 +119,10 @@ export function runningDispatched(): RunningAgent[] {
 // ---- Claude Code --------------------------------------------------------------------
 
 function startClaude(cwd: string, prompt: string, shortid: string, logFile: string, opts: DispatchOptions): Promise<DispatchResult> {
-  const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits']
   const out = openLog(logFile)
   let proc: ChildProcess
   try {
-    proc = spawnTool('claude', args, cwd, out)
+    proc = spawnTool('claude', CLAUDE_ARGS, prompt, cwd, out)
   } finally {
     closeSync(out) // the child keeps its own copy of the descriptor
   }
@@ -216,7 +214,7 @@ function startCodex(cwd: string, prompt: string, shortid: string, logFile: strin
   const out = openLog(logFile)
   let proc: ChildProcess
   try {
-    proc = spawnTool('codex', ['exec', '--full-auto', prompt], cwd, out)
+    proc = spawnTool('codex', CODEX_ARGS, prompt, cwd, out)
   } finally {
     closeSync(out)
   }
@@ -303,28 +301,23 @@ function logStarted(entry: Running, id: string, logFile: string): void {
 }
 
 /**
- * Posix: spawn directly with its own process group (detached) so the whole tree can be signalled.
- * Windows: the CLIs are .cmd shims, which need the shell, so the command line is quoted by hand.
+ * Starts `bin` with fixed `args` and writes `prompt` to its stdin, then closes stdin. The prompt is
+ * never on the command line, so no shell quoting touches it (%, &, |, ^, quotes and newlines arrive as-is).
  * Output goes to the log descriptor `out` (stdout and stderr), never to a pipe.
+ * Posix: spawn directly with its own process group (detached) so the whole tree can be signalled.
+ * Windows: the CLIs are .cmd shims, which need the shell. `args` are constants with no shell
+ * metacharacters, so joining them into the command string is safe; the worktree path goes via `cwd`.
  */
-function spawnTool(bin: string, args: string[], cwd: string, out: number): ChildProcess {
-  if (process.platform === 'win32') {
-    const commandLine = [bin, ...args].map(quoteForCmd).join(' ')
-    return spawn(commandLine, { cwd, shell: true, windowsHide: true, stdio: ['ignore', out, out] })
-  }
-  return spawn(bin, args, { cwd, detached: true, windowsHide: true, stdio: ['ignore', out, out] })
-}
-
-/**
- * Quotes one argument for cmd.exe running a child with MSVCRT argv rules. Newlines become spaces
- * (cmd ends the command at a line break). Not verified on Windows in this repo's test runs.
- */
-export function quoteForCmd(arg: string): string {
-  const flat = arg.replace(/\r?\n/g, ' ')
-  if (flat === '') return '""'
-  if (!/[\s"&|<>^()%!,;=]/.test(flat)) return flat
-  const escaped = flat.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')
-  return `"${escaped}"`
+function spawnTool(bin: string, args: readonly string[], prompt: string, cwd: string, out: number): ChildProcess {
+  const stdio: ['pipe', number, number] = ['pipe', out, out]
+  const proc =
+    process.platform === 'win32'
+      ? spawn([bin, ...args].join(' '), { cwd, shell: true, windowsHide: true, stdio })
+      : spawn(bin, [...args], { cwd, detached: true, windowsHide: true, stdio })
+  // If the CLI exits before reading its stdin, the write fails with EPIPE. The exit handler reports that run.
+  proc.stdin?.on('error', () => undefined)
+  proc.stdin?.end(prompt, 'utf8')
+  return proc
 }
 
 async function killTree(entry: Running): Promise<void> {
