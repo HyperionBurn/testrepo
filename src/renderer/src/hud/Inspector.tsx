@@ -332,7 +332,7 @@ function InspectorPanel({ path }: { path: string }) {
               </span>
             </div>
             {fileCommits.slice(0, 4).map((c) => (
-              <div className="event-row" key={c.hash} title={c.subject}>
+              <div className="event-row" key={c.hash} title={c.subject} style={{ gridTemplateColumns: '52px minmax(0, 1fr) auto' }}>
                 <span className="faint" style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5 }}>
                   {c.hash.slice(0, 7)}
                 </span>

@@ -78,13 +78,14 @@ export function dateTime(ts: number): string {
   return `${date}, ${clockTime(ts)}`
 }
 
+/** Last path segment, for both "/" and "\" separators: "C:\dev\app" -> "app". */
 export function basename(path: string): string {
-  const i = path.lastIndexOf('/')
-  return i < 0 ? path : path.slice(i + 1)
+  const parts = path.split(/[\\/]+/).filter(Boolean)
+  return parts[parts.length - 1] ?? path
 }
 
 export function dirname(path: string): string {
-  const i = path.lastIndexOf('/')
+  const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return i < 0 ? '' : path.slice(0, i)
 }
 

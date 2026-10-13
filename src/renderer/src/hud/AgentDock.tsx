@@ -5,6 +5,7 @@ import { useSky } from '../state/store'
 import { useUi, type DockTab } from '../lib/ui'
 import { compactNumber, middleEllipsis, modelShort, relativeTime, usd } from '../lib/format'
 import { useNow } from '../lib/hooks'
+import { FS_AGENT } from '../city/data'
 import { isActive, StatusPill } from './meta'
 import { ActivityFeed } from './ActivityFeed'
 import { IconDoc, IconPlus, IconSidebar, IconSparkle } from './icons'
@@ -79,7 +80,9 @@ function AgentCard({
     s.focusAgent(agent.id)
     if (file) s.select(file)
   }
-  const kind = agent.kind === 'claude-code' ? 'Claude Code' : agent.kind === 'codex' ? 'Codex' : 'Agent'
+  // The 'fs' pseudo-agent is filesystem changes no agent claimed: it has no kind and no model.
+  const isFs = agent.id === FS_AGENT
+  const kind = isFs ? 'Filesystem' : agent.kind === 'claude-code' ? 'Claude Code' : agent.kind === 'codex' ? 'Codex' : 'Agent'
   return (
     <div
       role="button"
@@ -105,8 +108,12 @@ function AgentCard({
       </div>
       <div className="agent-card__sub">
         <span>{kind}</span>
-        <span aria-hidden="true">·</span>
-        <span>{modelShort(agent.model)}</span>
+        {!isFs && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span>{modelShort(agent.model)}</span>
+          </>
+        )}
         <span aria-hidden="true">·</span>
         <span className="num">{relativeTime(agent.lastActiveAt, now)}</span>
       </div>

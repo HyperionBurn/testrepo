@@ -12,8 +12,8 @@ export const CITY_SIZE = 120
 
 const HALF = CITY_SIZE / 2
 const MIN_WEIGHT = 8             // weight = max(loc, MIN_WEIGHT)
-const STREET = 1.2               // street width between sibling districts, at every depth
-const PLATE_INSET = STREET / 2   // per side: each district plate is its treemap cell minus half a street
+const STREET_TOP = 2.4           // street width between sibling top-level districts (depth 1)
+const STREET = 1.2               // street width between sibling districts nested deeper (depth 2+)
 const BUILDING_INSET = 0.15      // building inset per side, as a fraction of its cell
 const MIN_FOOTPRINT = 0.4        // smallest building footprint, where the cell allows it
 const MIN_CELL_AREA = 0.36       // floor on a file's treemap area, so tiny files can still hold a MIN_FOOTPRINT building
@@ -276,6 +276,11 @@ function buildingHeight(loc: number): number {
   return 0.6 + 2.2 * Math.log2(1 + l / 20)
 }
 
+/** Per side: half the street between siblings at this depth, so sibling plates are a full street apart. */
+function plateInset(depth: number): number {
+  return (depth === 1 ? STREET_TOP : STREET) / 2
+}
+
 function buildingFor(leaf: FileChild, cell: Rect, district: string): CityBuilding {
   const f = leaf.file
   const w = Math.min(cell.w, Math.max(MIN_FOOTPRINT, cell.w * (1 - 2 * BUILDING_INSET)))
@@ -311,8 +316,9 @@ function layoutChildren(node: DirNode, rect: Rect, out: Output, district: string
       out.buildings.push(buildingFor(kid, cell, district))
       return
     }
-    // Directories: the plate is the cell minus half a street on each side, so sibling plates are 1.2 apart.
-    const plate = inset(cell, PLATE_INSET)
+    // Directories: the plate is the cell minus half a street on each side, so sibling plates are a
+    // street apart (2.4 for top-level districts, 1.2 for nested ones).
+    const plate = inset(cell, plateInset(kid.node.depth))
     // Top-level directories name their own district; nested ones inherit it.
     const topName = node.depth === 0 ? kid.name : district
     out.districts.push({
@@ -329,8 +335,8 @@ function layoutChildren(node: DirNode, rect: Rect, out: Output, district: string
 
 /**
  * Lays out a repo snapshot as a city: one building per file, one district plate per directory.
- * Sibling districts are separated by 1.2 unit streets at every depth, and the whole city fits in
- * a CITY_SIZE square centered on the origin. Children are squarified largest first (area descending,
+ * Sibling districts are separated by 2.4 unit streets at the top level and 1.2 unit streets deeper,
+ * and the whole city fits in a CITY_SIZE square centered on the origin. Children are squarified largest first (area descending,
  * ties by name). The result depends only on the set of files, not on their input order.
  */
 export function buildLayout(snapshot: RepoSnapshot): CityLayout {

@@ -180,6 +180,37 @@ describe('buildLayout invariants (60-file nested repo)', () => {
     }
   })
 
+  it('leaves a 2.4 unit street between top-level districts and 1.2 between nested ones', () => {
+    // Gap between two plates: the larger of the separations on x and z (negative means they overlap on that axis).
+    const gap = (a: CityDistrict, b: CityDistrict): number =>
+      Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w), b.z - (a.z + a.d), a.z - (b.z + b.d))
+    const groups = new Map<string, CityDistrict[]>()
+    for (const d of layout.districts) {
+      const parent = d.name.includes('/') ? d.name.slice(0, d.name.lastIndexOf('/')) : ''
+      const list = groups.get(parent) ?? []
+      list.push(d)
+      groups.set(parent, list)
+    }
+    for (const [parent, siblings] of groups) {
+      if (siblings.length < 2) continue
+      const depth = siblings[0]?.depth ?? 0
+      const street = depth === 1 ? 2.4 : 1.2
+      // Adjacent siblings share an edge in the treemap, so the closest pair is exactly one street apart.
+      let closest = Infinity
+      for (let i = 0; i < siblings.length; i++) {
+        for (let j = i + 1; j < siblings.length; j++) {
+          const a = siblings[i]
+          const b = siblings[j]
+          if (!a || !b) continue
+          const g = gap(a, b)
+          expect(g, `${a.name} vs ${b.name}`).toBeGreaterThanOrEqual(street - EPS)
+          closest = Math.min(closest, g)
+        }
+      }
+      expect(closest, `closest siblings under '${parent}'`).toBeCloseTo(street, 6)
+    }
+  })
+
   it('keeps every footprint at or above the 0.4 minimum', () => {
     for (const b of layout.buildings) {
       expect(Math.min(b.w, b.d)).toBeGreaterThanOrEqual(0.4 - EPS)

@@ -13,18 +13,6 @@ import { isClick } from './registry'
 import { FOG_DENSITY, FOG_HEX } from './Sky'
 
 const PLATE_HEIGHT_PER_DEPTH = 0.08
-/**
- * Top-level plates are drawn inset by this much per side. The layout leaves 1.2 units between siblings;
- * with the inset the streets between top-level districts read as about 2.5 units wide. Nested plates
- * overhang the inset edge by at most ~0.05 (they sit 0.6 inside their parent's rect).
- */
-const TOP_INSET = 0.65
-
-/** Drawn footprint of a district plate. */
-function plateRect(d: CityDistrict): { x: number; z: number; w: number; d: number } {
-  const k = d.depth === 1 ? TOP_INSET : 0
-  return { x: d.x + k, z: d.z + k, w: d.w - 2 * k, d: d.d - 2 * k }
-}
 
 const GROUND_VERT = `
 varying vec3 vW;
@@ -107,9 +95,8 @@ export function Districts({ districts }: { districts: readonly CityDistrict[] })
     const c = new Color()
     districts.forEach((d, i) => {
       const hgt = PLATE_HEIGHT_PER_DEPTH * d.depth
-      const r = plateRect(d)
-      pos.set(r.x + r.w / 2, 0, r.z + r.d / 2)
-      scale.set(r.w, hgt, r.d)
+      pos.set(d.x + d.w / 2, 0, d.z + d.d / 2)
+      scale.set(d.w, hgt, d.d)
       mat.compose(pos, quat, scale)
       m.setMatrixAt(i, mat)
       c.setHSL(0.6, 0.45, 0.04 + Math.min(d.depth, 6) * 0.009)
@@ -127,8 +114,7 @@ export function Districts({ districts }: { districts: readonly CityDistrict[] })
     const c = new Color()
     for (const d of districts) {
       const y = PLATE_HEIGHT_PER_DEPTH * d.depth + 0.015
-      const r = plateRect(d)
-      const x0 = r.x, x1 = r.x + r.w, z0 = r.z, z1 = r.z + r.d
+      const x0 = d.x, x1 = d.x + d.w, z0 = d.z, z1 = d.z + d.d
       const edges = [x0, z0, x1, z0, x1, z0, x1, z1, x1, z1, x0, z1, x0, z1, x0, z0]
       const k = d.depth === 1 ? 1.5 : d.depth === 2 ? 0.5 : 0.2
       c.setHSL((0.56 + d.depth * 0.04) % 1, 0.9, 0.6).multiplyScalar(k)
@@ -209,9 +195,8 @@ function DistrictLabels({ districts }: { districts: readonly CityDistrict[] }) {
     const out: Label[] = []
     for (const d of districts) {
       if (d.depth !== 1) continue
-      // Centered in the widened street just above the plate's min-z edge.
-      const r = plateRect(d)
-      const l = makeLabel(d.name, r.x + 0.4, r.z - 1.25)
+      // Centred in the 2.4 unit street just below the plate's min-z edge (its midline is 1.2 out).
+      const l = makeLabel(d.name, d.x + 0.4, d.z - 1.2)
       if (l) out.push(l)
     }
     return out

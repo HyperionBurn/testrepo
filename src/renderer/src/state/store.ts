@@ -192,9 +192,12 @@ export function bootstrapSky(api: SkylineAPI): () => void {
   const offAgents = api.on('agents', (a) => useSky.getState().setAgents(a))
   const offEvent = api.on('event', (e) => useSky.getState().pushEvent(e))
   const offRepo = api.on('repo', (s) => useSky.getState().setRepo(s))
+  // Git history after HEAD, a ref or the reflog moved: keeps the time-lapse current without a reopen.
+  const offHistory = api.on('history', (c) => useSky.getState().setCommits(c))
   return () => {
     offAgents()
     offEvent()
     offRepo()
+    offHistory()
   }
 }

@@ -1,5 +1,7 @@
 // "While you were away": a local digest of agent activity since a timestamp, plus local-model status.
-import { useEffect, useState } from 'react'
+// digest() answers at once with the heuristic summary. When the local model finishes, its digest arrives
+// on the 'digest' channel and replaces the heuristic in place with a crossfade.
+import { useEffect, useRef, useState } from 'react'
 import type { Digest, LlmStatus } from '@shared/types'
 import { useUi } from '../lib/ui'
 import { clockTime, duration } from '../lib/format'
@@ -9,9 +11,29 @@ import { Markdown } from '../lib/markdown'
 import { Overlay } from './Overlay'
 import { IconDownload, IconRefresh, IconSparkle, IconX } from './icons'
 
-type DigestState = { status: 'loading' } | { status: 'ready'; digest: Digest } | { status: 'error'; message: string };
+/** The main process labels a heuristic answer written while the local model is still busy this way. */
+const STILL_THINKING = /still thinking/i
+/** How long the outgoing text stays mounted while it fades. Matches the CSS crossfade. */
+const CROSSFADE_MS = 700
+
+type DigestState =
+  | { status: 'loading' }
+  | {
+      status: 'ready';
+      digest: Digest;
+      /** Bumped for every digest shown, so the incoming text gets its own fade-in. */
+      revision: number;
+      /** The digest being replaced, kept mounted for the crossfade. */
+      leaving: Digest | null;
+    }
+  | { status: 'error'; message: string };
 
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v))
+
+/** True while the answer on screen is the heuristic and the local model has not finished writing. */
+export function isStillThinking(model: string): boolean {
+  return STILL_THINKING.test(model)
+}
 
 /** Progress ring. `value` null means indeterminate: the ring spins. */
 export function ProgressRing({ value, size = 18 }: { value: number | null; size?: number }) {
@@ -45,10 +67,9 @@ export function ProgressRing({ value, size = 18 }: { value: number | null; size?
   )
 }
 
-function modelLabel(model: string): { text: string; heuristic: boolean } {
-  if (/heuristic/i.test(model)) return { text: 'Heuristic summary', heuristic: true }
-  const name = model.replace(/\.gguf$/i, '').trim() || 'local model'
-  return { text: `Written locally by ${name}`, heuristic: false }
+/** Footer label for the digest's source. */
+function sourceLabel(model: string): string {
+  return /heuristic/i.test(model) ? 'Heuristic summary' : 'Refined by local model'
 }
 
 function LlmChip({ llm }: { llm: LlmStatus | null }) {
@@ -99,21 +120,36 @@ function LlmChip({ llm }: { llm: LlmStatus | null }) {
   }
 }
 
+function DigestText({ digest }: { digest: Digest }) {
+  if (!digest.text.trim()) {
+    return (
+      <div className="muted" style={{ fontSize: 13, paddingBottom: 6 }}>
+        Nothing notable happened in this window.
+      </div>
+    )
+  }
+  return <Markdown text={digest.text} />
+}
+
 export function DigestCard() {
   const since = useUi((s) => s.digestSince)
   const [state, setState] = useState<DigestState>({ status: 'loading' })
   const [llm, setLlm] = useState<LlmStatus | null>(null)
   const [regen, setRegen] = useState(0)
+  const revisions = useRef(0)
 
   const close = () => useUi.getState().closeDigest()
 
+  // The heuristic (or, on regenerate, the first answer) for this window.
   useEffect(() => {
     let alive = true
     setState({ status: 'loading' })
     window.skyline
       .digest(since)
       .then((digest) => {
-        if (alive) setState({ status: 'ready', digest })
+        if (!alive) return
+        revisions.current += 1
+        setState({ status: 'ready', digest, revision: revisions.current, leaving: null })
       })
       .catch((e: unknown) => {
         if (alive) setState({ status: 'error', message: errorText(e) })
@@ -122,6 +158,28 @@ export function DigestCard() {
       alive = false
     }
   }, [since, regen])
+
+  // The local model's digest, when it finishes after the heuristic was shown. It replaces the heuristic in place.
+  useEffect(() => {
+    const off = window.skyline.on('digest', (refined) => {
+      setState((prev) => {
+        if (prev.status !== 'ready' || !isStillThinking(prev.digest.model)) return prev
+        revisions.current += 1
+        return { status: 'ready', digest: refined, revision: revisions.current, leaving: prev.digest }
+      })
+    })
+    return off
+  }, [])
+
+  // Drop the outgoing text once its fade has finished.
+  const leaving = state.status === 'ready' ? state.leaving : null
+  useEffect(() => {
+    if (!leaving) return
+    const id = window.setTimeout(() => {
+      setState((prev) => (prev.status === 'ready' && prev.leaving === leaving ? { ...prev, leaving: null } : prev))
+    }, CROSSFADE_MS)
+    return () => window.clearTimeout(id)
+  }, [leaving])
 
   useEffect(() => {
     let alive = true
@@ -143,6 +201,9 @@ export function DigestCard() {
   }, [])
 
   const windowLabel = `Since ${clockTime(since)} · ${duration(Date.now() - since)}`
+  // The shimmer line is only honest while a model can still deliver: not when it is absent or broken.
+  const modelCanFinish = llm === null || (llm.state !== 'absent' && llm.state !== 'error')
+  const waiting = state.status === 'ready' && isStillThinking(state.digest.model) && modelCanFinish
 
   return (
     <Overlay onClose={close} label="Digest" placement="under-title" dim={false}>
@@ -187,26 +248,34 @@ export function DigestCard() {
               The digest could not be written. {state.message}
             </div>
           )}
-          {state.status === 'ready' &&
-            (state.digest.text.trim() ? (
-              <Markdown text={state.digest.text} />
-            ) : (
-              <div className="muted" style={{ fontSize: 13, paddingBottom: 6 }}>
-                Nothing notable happened in this window.
+          {state.status === 'ready' && (
+            <div className="digest__stack">
+              {state.leaving && (
+                <div key={`leave-${state.revision}`} className="digest__layer digest__layer--leave" aria-hidden="true">
+                  <DigestText digest={state.leaving} />
+                </div>
+              )}
+              <div key={`enter-${state.revision}`} className="digest__layer digest__layer--enter">
+                <DigestText digest={state.digest} />
               </div>
-            ))}
+            </div>
+          )}
+          {waiting && (
+            <div className="digest__writing text-shine" role="status">
+              Local model is still writing…
+            </div>
+          )}
         </div>
 
         <footer className="digest__foot">
           {state.status === 'ready' ? (
-            (() => {
-              const m = modelLabel(state.digest.model)
-              return (
-                <span className="faint" style={{ fontSize: 11.5, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {m.text}
-                </span>
-              )
-            })()
+            <span
+              className="faint"
+              title={state.digest.model}
+              style={{ fontSize: 11.5, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {sourceLabel(state.digest.model)}
+            </span>
           ) : (
             <span className="faint" style={{ fontSize: 11.5 }}>
               Writing…

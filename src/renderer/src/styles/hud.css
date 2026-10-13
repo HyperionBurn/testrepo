@@ -1322,6 +1322,51 @@
   margin-top: 14px;
 }
 
+/* Heuristic-to-refined swap: both texts share one grid cell and cross-fade. */
+.digest__stack {
+  display: grid;
+}
+
+.digest__layer {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+
+.digest__layer--enter {
+  animation: digest-enter 640ms var(--spring) both;
+}
+
+.digest__layer--leave {
+  animation: digest-leave 640ms ease both;
+  pointer-events: none;
+}
+
+@keyframes digest-enter {
+  from { opacity: 0; filter: blur(3px); }
+  to { opacity: 1; filter: none; }
+}
+
+@keyframes digest-leave {
+  from { opacity: 1; filter: none; }
+  to { opacity: 0; filter: blur(3px); }
+}
+
+.digest__writing {
+  margin-top: 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .digest__layer--enter {
+    animation: none;
+  }
+
+  .digest__layer--leave {
+    display: none;
+  }
+}
+
 .llm-chip {
   display: inline-flex;
   align-items: center;
@@ -1395,6 +1440,102 @@
   color: var(--text-3);
   font-size: 11.5px;
   text-align: center;
+}
+
+/* Aside holds the recent lists. Stacked under the hero when narrow; a second column when wide. */
+.welcome__aside {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--hair);
+}
+
+.welcome__aside .recent {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+@media (min-width: 1040px) {
+  .welcome--wide {
+    width: min(860px, calc(100vw - 48px));
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 36px;
+    align-items: start;
+  }
+
+  .welcome--wide .welcome__main {
+    min-width: 0;
+  }
+
+  .welcome--wide .welcome__aside {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+    padding-left: 32px;
+    border-left: 1px solid var(--hair);
+    align-self: stretch;
+  }
+
+  .welcome--wide .welcome__foot {
+    grid-column: 1 / -1;
+  }
+}
+
+.activity__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+
+.activity__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  column-gap: 9px;
+}
+
+.activity__text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.activity__name {
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.activity__path {
+  font-size: 11px;
+}
+
+.activity__kinds {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.activity__kind {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  color: #fff;
+  background: var(--c);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.activity__time {
+  font-size: 11px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .scanning {
