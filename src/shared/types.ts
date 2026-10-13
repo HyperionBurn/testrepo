@@ -87,4 +87,5 @@ export interface SkylineAPI {
   on(channel: 'llm', cb: (s: LlmStatus) => void): () => void;
   window: { minimize(): void; maximize(): void; close(): void };
   platform: string;
+  autoOpen(): Promise<string | null>;                         // repo path from SKYLINE_OPEN env, if set
 }

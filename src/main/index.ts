@@ -1,6 +1,6 @@
 import { app, BrowserWindow, type BrowserWindowConstructorOptions } from 'electron'
 import { join } from 'node:path'
-import { registerIpc } from './ipc'
+import { disposeIpc, registerIpc } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -59,5 +59,9 @@ if (!gotLock) {
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
+  })
+
+  app.on('before-quit', () => {
+    disposeIpc()
   })
 }

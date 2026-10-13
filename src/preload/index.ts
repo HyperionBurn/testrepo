@@ -49,7 +49,8 @@ const api: SkylineAPI = {
     maximize: () => send(IPC.winMax),
     close: () => send(IPC.winClose)
   },
-  platform: process.platform
+  platform: process.platform,
+  autoOpen: () => call<string | null>(IPC.autoOpen)
 }
 
 contextBridge.exposeInMainWorld('skyline', api)
