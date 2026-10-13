@@ -1,5 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import './styles/glass.css'
+import './styles/hud.css'
 import { App } from './App'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
