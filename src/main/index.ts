@@ -1,9 +1,23 @@
-import { app, BrowserWindow, type BrowserWindowConstructorOptions } from 'electron'
+import { app, BrowserWindow, session, type BrowserWindowConstructorOptions } from 'electron'
 import { join } from 'node:path'
 import { disposeIpc, registerIpc } from './ipc'
 import { createQuitGate } from './quit'
+import { denyAllPermissions, installWebContentsGuards } from './security/guards'
+import type { AppUrls } from './security/trust'
 
 let mainWindow: BrowserWindow | null = null
+
+// Output: out/renderer/renderer/index.html (see electron.vite.config.ts).
+// Dev: ELECTRON_RENDERER_URL is the vite server whose root is src/.
+const devUrl = process.env.ELECTRON_RENDERER_URL
+const appUrls: AppUrls = {
+  devUrl,
+  rendererFile: join(__dirname, '../renderer/renderer/index.html'),
+  caseInsensitivePaths: process.platform === 'win32'
+}
+
+// Registered before any window exists, so the first web contents is guarded too.
+installWebContentsGuards(app, appUrls)
 
 function createWindow(): BrowserWindow {
   const options: BrowserWindowConstructorOptions = {
@@ -16,7 +30,7 @@ function createWindow(): BrowserWindow {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      sandbox: false
+      sandbox: true
     }
   }
   if (process.platform === 'win32') {
@@ -29,13 +43,10 @@ function createWindow(): BrowserWindow {
   const win = new BrowserWindow(options)
   win.once('ready-to-show', () => win.show())
 
-  // Output: out/renderer/renderer/index.html (see electron.vite.config.ts).
-  // Dev: ELECTRON_RENDERER_URL is the vite server whose root is src/.
-  const devUrl = process.env.ELECTRON_RENDERER_URL
   if (devUrl) {
     void win.loadURL(`${devUrl}/renderer/index.html`)
   } else {
-    void win.loadFile(join(__dirname, '../renderer/renderer/index.html'))
+    void win.loadFile(appUrls.rendererFile)
   }
   return win
 }
@@ -52,10 +63,11 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     app.setAppUserModelId('app.skyline')
+    denyAllPermissions(session.defaultSession)
 
     // Single window app (Windows target). IPC handlers are registered once, so no 'activate' re-creation here.
     mainWindow = createWindow()
-    registerIpc(mainWindow)
+    registerIpc(mainWindow, appUrls)
   })
 
   app.on('window-all-closed', () => {

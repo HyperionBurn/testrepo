@@ -1,5 +1,9 @@
 // Best-effort import extraction. Regex based on purpose: no parser, no crashes on odd input.
 // Every specifier is resolved to a repo-relative file path that exists in `fileSet`; the rest is dropped.
+//
+// Two steps, so a scan never has to hold every file's text at once:
+//   collectImportRefs  reads one file's text and keeps only the raw references (small strings);
+//   resolveImportRefs  matches those references against the full file set, once every file is known.
 import { posix } from 'node:path'
 import { langFromPath } from '../../shared/lang'
 import type { Lang } from '../../shared/types'
@@ -7,6 +11,16 @@ import type { Lang } from '../../shared/types'
 const JS_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.d.ts']
 const CSS_EXTS = ['.css', '.scss', '.sass', '.less']
 const RS_CRATE_ROOTS = new Set(['mod.rs', 'lib.rs', 'main.rs'])
+
+/** Files larger than this carry no import references. Generated bundles and lockfiles are not worth the regex time. */
+export const IMPORT_SCAN_MAX_BYTES = 512 * 1024
+
+/** A reference as written in the source, before it is matched against the repo's files. */
+export type ImportRef =
+  | { kind: 'js'; dir: string; spec: string }
+  | { kind: 'css'; dir: string; spec: string }
+  | { kind: 'py'; dir: string; parts: string[] }
+  | { kind: 'rs'; name: string }
 
 /** Languages whose files carry import statements worth parsing. */
 export function hasImportSupport(lang: Lang): boolean {
@@ -18,25 +32,54 @@ export function hasImportSupport(lang: Lang): boolean {
  * Deduplicated, sorted, never contains `rel` itself.
  */
 export function extractImports(rel: string, content: string, fileSet: ReadonlySet<string>): string[] {
+  return resolveImportRefs(rel, collectImportRefs(rel, content), fileSet)
+}
+
+/** Raw import references of one file. Empty for languages without import support, and for oversized files. */
+export function collectImportRefs(rel: string, content: string): ImportRef[] {
+  if (Buffer.byteLength(content, 'utf8') > IMPORT_SCAN_MAX_BYTES) return []
   const lang = langFromPath(rel)
+  const dir = posix.dirname(rel)
+  const refs: ImportRef[] = []
+  if (lang === 'ts' || lang === 'js') {
+    for (const spec of jsSpecifiers(content)) {
+      if (spec === '.' || spec === '..' || spec.startsWith('./') || spec.startsWith('../')) {
+        refs.push({ kind: 'js', dir, spec })
+      }
+    }
+  } else if (lang === 'py') {
+    refs.push(...pythonRefs(rel, content))
+  } else if (lang === 'css') {
+    for (const spec of cssSpecifiers(content)) refs.push({ kind: 'css', dir, spec })
+  } else if (lang === 'rs') {
+    for (const name of rustModules(content)) refs.push({ kind: 'rs', name })
+  }
+  // Go and everything else: no import resolution.
+  return refs
+}
+
+/** Matches collected references against the repo's files. Deduplicated, sorted, never contains `rel` itself. */
+export function resolveImportRefs(rel: string, refs: readonly ImportRef[], fileSet: ReadonlySet<string>): string[] {
   const found = new Set<string>()
   const add = (target: string | undefined): void => {
     if (target && target !== rel && fileSet.has(target)) found.add(target)
   }
-  if (lang === 'ts' || lang === 'js') {
-    for (const spec of jsSpecifiers(content)) {
-      if (spec === '.' || spec === '..' || spec.startsWith('./') || spec.startsWith('../')) {
-        add(resolveJs(posix.dirname(rel), spec, fileSet))
-      }
+  for (const ref of refs) {
+    switch (ref.kind) {
+      case 'js':
+        add(resolveJs(ref.dir, ref.spec, fileSet))
+        break
+      case 'css':
+        add(resolveCss(ref.dir, ref.spec, fileSet))
+        break
+      case 'py':
+        add(pyModule(ref.dir, ref.parts, fileSet))
+        break
+      case 'rs':
+        add(resolveRust(rel, ref.name, fileSet))
+        break
     }
-  } else if (lang === 'py') {
-    for (const target of pythonTargets(rel, content, fileSet)) add(target)
-  } else if (lang === 'css') {
-    for (const spec of cssSpecifiers(content)) add(resolveCss(posix.dirname(rel), spec, fileSet))
-  } else if (lang === 'rs') {
-    for (const name of rustModules(content)) add(resolveRust(rel, name, fileSet))
   }
-  // Go and everything else: no import resolution.
   return [...found].sort()
 }
 
@@ -90,9 +133,13 @@ function resolveJs(dir: string, spec: string, fileSet: ReadonlySet<string>): str
 
 // ---- Python ----------------------------------------------------------------
 
-function pythonTargets(rel: string, src: string, fileSet: ReadonlySet<string>): string[] {
-  const out: string[] = []
+/** Lookups for every module a Python file names. Each lookup is {dir, parts}, resolved later by pyModule. */
+function pythonRefs(rel: string, src: string): ImportRef[] {
+  const out: ImportRef[] = []
   const fileDir = posix.dirname(rel)
+  const py = (dir: string, parts: string[]): void => {
+    out.push({ kind: 'py', dir, parts })
+  }
 
   for (const m of src.matchAll(/^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+(\([^)]*\)|[^\n#]*)/gm)) {
     const dots = m[1].length
@@ -101,17 +148,17 @@ function pythonTargets(rel: string, src: string, fileSet: ReadonlySet<string>): 
     if (dots > 0) {
       let base = fileDir
       for (let i = 1; i < dots; i++) base = posix.dirname(base)
-      if (parts.length > 0) out.push(pyModule(base, parts, fileSet) ?? '')
-      else for (const n of names) out.push(pyModule(base, [n], fileSet) ?? '')
-      for (const n of names) if (parts.length > 0) out.push(pyModule(base, [...parts, n], fileSet) ?? '')
+      if (parts.length > 0) py(base, parts)
+      else for (const n of names) py(base, [n])
+      for (const n of names) if (parts.length > 0) py(base, [...parts, n])
     } else if (parts.length > 0) {
       // Absolute import: repo root first, then the importing file's directory (script-style imports).
-      out.push(pyModule('', parts, fileSet) ?? '')
-      out.push(pyModule(fileDir, parts, fileSet) ?? '')
+      py('', parts)
+      py(fileDir, parts)
       // "from pkg import submodule" also resolves when submodule is a file.
       for (const n of names) {
-        out.push(pyModule('', [...parts, n], fileSet) ?? '')
-        out.push(pyModule(fileDir, [...parts, n], fileSet) ?? '')
+        py('', [...parts, n])
+        py(fileDir, [...parts, n])
       }
     }
   }
@@ -121,11 +168,11 @@ function pythonTargets(rel: string, src: string, fileSet: ReadonlySet<string>): 
       const mod = item.trim().replace(/\s+as\s+\w+$/, '').trim()
       if (!/^[A-Za-z_][\w.]*$/.test(mod)) continue
       const parts = mod.split('.')
-      out.push(pyModule('', parts, fileSet) ?? '')
-      out.push(pyModule(fileDir, parts, fileSet) ?? '')
+      py('', parts)
+      py(fileDir, parts)
     }
   }
-  return out.filter((p) => p !== '')
+  return out
 }
 
 /** Imported names from the tail of a `from x import ...` line; '*' and aliases handled. */
@@ -149,7 +196,9 @@ function pyModule(dir: string, parts: string[], fileSet: ReadonlySet<string>): s
 
 function cssSpecifiers(src: string): string[] {
   const out: string[] = []
-  for (const m of src.matchAll(/@(?:import|use|forward)\s+([^;]+);/g)) {
+  // Bounded: the statement must end with ';' within 300 characters on one line. An unbounded [^;]+ is
+  // quadratic on input that repeats '@import ' with no ';' (each start position scans to the end).
+  for (const m of src.matchAll(/@(?:import|use|forward)\s+([^;\n]{1,300});/g)) {
     for (const q of m[1].matchAll(/['"]([^'"\n]+)['"]/g)) out.push(q[1])
     for (const u of m[1].matchAll(/url\(\s*['"]?([^'")\s]+)/g)) out.push(u[1])
   }

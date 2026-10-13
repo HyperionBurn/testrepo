@@ -29,6 +29,8 @@ export class RepoWatcher extends EventEmitter {
         return rel !== '' && isIgnoredRel(rel)
       },
       ignoreInitial: true,
+      // A symlink can point outside the repo (or into .git). Watch the link itself, never its target.
+      followSymlinks: false,
       awaitWriteFinish: { stabilityThreshold: 150, pollInterval: 50 }
     })
     w.on('add', (p) => this.report(p, 'add'))

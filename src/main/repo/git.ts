@@ -62,19 +62,29 @@ export function isGitIgnored(root: string, rel: string): Promise<boolean> {
  * Timestamps are epoch milliseconds.
  */
 export async function getHistory(root: string, limit = HISTORY_LIMIT): Promise<GitCommit[]> {
-  const out = await runGit(root, [
-    'log',
-    '--numstat',
-    '--summary',
-    '--no-renames',
-    '--format=%x1e%H%x1f%at%x1f%an%x1f%s',
-    `--max-count=${Math.max(1, Math.floor(limit))}`
+  // --relative: paths are relative to `root` (the folder Skyline opened), the same base as listGitFiles.
+  // Without it, log paths are repo-root relative and a subfolder would never match the file list.
+  const [out, prefix] = await Promise.all([
+    runGit(root, [
+      'log',
+      '--relative',
+      '--numstat',
+      '--summary',
+      '--no-renames',
+      '--format=%x1e%H%x1f%at%x1f%an%x1f%s',
+      `--max-count=${Math.max(1, Math.floor(limit))}`
+    ]),
+    runGit(root, ['rev-parse', '--show-prefix'])
   ])
-  return out === null ? [] : parseGitLog(out)
+  return out === null ? [] : parseGitLog(out, prefix?.trim() ?? '')
 }
 
-/** Parses the output of the `git log` command used by getHistory. Pure; exported for tests. */
-export function parseGitLog(text: string): GitCommit[] {
+/**
+ * Parses the output of the `git log` command used by getHistory. Pure; exported for tests.
+ * `prefix` is `root` relative to the repo top (empty at the top). git's --relative does not apply to the
+ * `create mode` summary lines, so they are rebased here and anything outside `root` is dropped.
+ */
+export function parseGitLog(text: string, prefix = ''): GitCommit[] {
   const commits: GitCommit[] = []
   for (const record of text.split(RECORD_SEP)) {
     const lines = record.split('\n').map((l) => l.replace(/\r$/, ''))
@@ -99,7 +109,10 @@ export function parseGitLog(text: string): GitCommit[] {
       }
       // --summary lists files this commit creates: " create mode 100644 <path>".
       const c = /^ create mode \d+ (.+)$/.exec(lines[i])
-      if (c) created.push(unquoteGitPath(c[1]))
+      if (!c) continue
+      const repoPath = unquoteGitPath(c[1])
+      if (prefix === '') created.push(repoPath)
+      else if (repoPath.startsWith(prefix)) created.push(repoPath.slice(prefix.length))
     }
     commits.push({
       hash,

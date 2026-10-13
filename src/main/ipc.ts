@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, shell, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { promises as fsp } from 'node:fs'
 import * as path from 'node:path'
@@ -19,6 +19,7 @@ import { RepoSession } from './session'
 import { addRecent, getSettings, modelsDir } from './store'
 import { readRepoText } from './repo/read'
 import type { LocalLlm } from './llm/local'
+import { isTrustedAppUrl, type AppUrls } from './security/trust'
 
 const EVENT_BUDGET_PER_SEC = 200
 const HISTORY_DEFAULT = 1500
@@ -137,28 +138,40 @@ function errorText(err: unknown): string {
 
 // ---- handlers -----------------------------------------------------------------------------
 
-/** Wires ipcMain handlers. Called once, after the main window is created. */
-export function registerIpc(win: BrowserWindow): void {
+/**
+ * Wires ipcMain handlers. Called once, after the main window is created.
+ * Every handler checks the sender: a call from a frame that is not the app's own page is refused.
+ */
+export function registerIpc(win: BrowserWindow, urls: AppUrls): void {
   mainWin = win
 
+  const handle = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown): void => {
+    ipcMain.handle(channel, async (event, ...args) => {
+      if (!isTrustedAppUrl(event.senderFrame?.url, urls)) {
+        throw new Error(`Blocked ${channel} from an untrusted page`)
+      }
+      return fn(event, ...args)
+    })
+  }
+
   // Window chrome (custom titlebar buttons)
-  ipcMain.handle(IPC.winMin, () => {
+  handle(IPC.winMin, () => {
     win.minimize()
   })
-  ipcMain.handle(IPC.winMax, () => {
+  handle(IPC.winMax, () => {
     if (win.isMaximized()) win.unmaximize()
     else win.maximize()
   })
-  ipcMain.handle(IPC.winClose, () => {
+  handle(IPC.winClose, () => {
     win.close()
   })
 
-  ipcMain.handle(IPC.pickFolder, async () => {
+  handle(IPC.pickFolder, async () => {
     const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
     return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
   })
 
-  ipcMain.handle(IPC.openRepo, async (_e, root: unknown): Promise<RepoSnapshot> => {
+  handle(IPC.openRepo, async (_e, root: unknown): Promise<RepoSnapshot> => {
     const abs = path.resolve(asString(root, 'Repository path'))
     const st = await fsp.stat(abs).catch(() => null)
     if (!st?.isDirectory()) throw new Error(`Not a folder: ${abs}`)
@@ -178,23 +191,23 @@ export function registerIpc(win: BrowserWindow): void {
     return next.getSnapshot()
   })
 
-  ipcMain.handle(IPC.getAgents, (): AgentInfo[] => session?.getAgents() ?? [])
+  handle(IPC.getAgents, (): AgentInfo[] => session?.getAgents() ?? [])
 
-  ipcMain.handle(IPC.getEvents, (_e, sinceTs: unknown): AgentEvent[] => {
+  handle(IPC.getEvents, (_e, sinceTs: unknown): AgentEvent[] => {
     const since = typeof sinceTs === 'number' && Number.isFinite(sinceTs) ? sinceTs : undefined
     return session?.getEvents(since) ?? []
   })
 
-  ipcMain.handle(IPC.getHistory, async (_e, limit: unknown): Promise<GitCommit[]> => {
+  handle(IPC.getHistory, async (_e, limit: unknown): Promise<GitCommit[]> => {
     if (!session) return []
     return session.getHistory(clampInt(limit, 1, HISTORY_MAX, HISTORY_DEFAULT))
   })
 
-  ipcMain.handle(IPC.readFile, async (_e, rel: unknown): Promise<string> => {
+  handle(IPC.readFile, async (_e, rel: unknown): Promise<string> => {
     return readRepoText(requireSession().root, asString(rel, 'Path'))
   })
 
-  ipcMain.handle(IPC.dispatch, async (_e, req: unknown): Promise<{ agentId: string }> => {
+  handle(IPC.dispatch, async (_e, req: unknown): Promise<{ agentId: string }> => {
     const root = requireSession().root
     const r = (typeof req === 'object' && req !== null ? req : {}) as Partial<DispatchRequest>
     if (r.kind !== 'claude-code' && r.kind !== 'codex') throw new Error('Unknown agent kind')
@@ -210,11 +223,11 @@ export function registerIpc(win: BrowserWindow): void {
     return { agentId: result.agentId }
   })
 
-  ipcMain.handle(IPC.stopAgent, async (_e, agentId: unknown): Promise<void> => {
+  handle(IPC.stopAgent, async (_e, agentId: unknown): Promise<void> => {
     await stopDispatched(asString(agentId, 'Agent id'))
   })
 
-  ipcMain.handle(IPC.llmStatus, async (): Promise<LlmStatus> => {
+  handle(IPC.llmStatus, async (): Promise<LlmStatus> => {
     try {
       return (await getLlm()).status()
     } catch (err) {
@@ -222,11 +235,11 @@ export function registerIpc(win: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle(IPC.llmDownload, async (): Promise<void> => {
+  handle(IPC.llmDownload, async (): Promise<void> => {
     await (await getLlm()).download()
   })
 
-  ipcMain.handle(IPC.digest, async (_e, sinceTs: unknown): Promise<Digest> => {
+  handle(IPC.digest, async (_e, sinceTs: unknown): Promise<Digest> => {
     const since = typeof sinceTs === 'number' && Number.isFinite(sinceTs) ? sinceTs : 0
     const s = session
     const events = s?.getEvents(since) ?? []
@@ -235,23 +248,23 @@ export function registerIpc(win: BrowserWindow): void {
     return (await getLlm()).digest(events, agents, s?.displayName ?? 'repository', randomUUID())
   })
 
-  ipcMain.handle(IPC.explain, async (_e, rel: unknown): Promise<string> => {
+  handle(IPC.explain, async (_e, rel: unknown): Promise<string> => {
     const s = requireSession()
     const p = asString(rel, 'Path')
     const content = await readRepoText(s.root, p)
     return (await getLlm()).explain(p, content, s.displayName)
   })
 
-  ipcMain.handle(IPC.getSettings, () => getSettings())
+  handle(IPC.getSettings, () => getSettings())
 
-  ipcMain.handle(IPC.listSessions, async (): Promise<RecentSession[]> => {
+  handle(IPC.listSessions, async (): Promise<RecentSession[]> => {
     const settings = getSettings()
     return listRecentSessions({ claudeHome: settings.claudeDir, codexHome: settings.codexDir })
   })
 
-  ipcMain.handle(IPC.autoOpen, (): string | null => process.env.SKYLINE_OPEN || null)
+  handle(IPC.autoOpen, (): string | null => process.env.SKYLINE_OPEN || null)
 
-  ipcMain.handle(IPC.saveCapture, async (_e, data: unknown, suggestedName: unknown, copy: unknown): Promise<string | null> => {
+  handle(IPC.saveCapture, async (_e, data: unknown, suggestedName: unknown, copy: unknown): Promise<string | null> => {
     return saveCapture(win, data, suggestedName, copy === true)
   })
 }

@@ -1,16 +1,21 @@
 // Repo snapshot: which files exist, their language, size, LOC, imports and churn.
-import { promises as fsp, type Dirent, type Stats } from 'node:fs'
+import { constants as fsConstants, promises as fsp, type Dirent, type Stats } from 'node:fs'
+import type { FileHandle } from 'node:fs/promises'
 import * as path from 'node:path'
 import { isProbablyBinary, langFromPath } from '../../shared/lang'
 import type { FileNode, GitCommit, Lang, RepoSnapshot } from '../../shared/types'
 import { churnCounts, currentBranch, getHistory, HISTORY_LIMIT, isGitIgnored, isGitRepo, listGitFiles } from './git'
-import { extractImports, hasImportSupport } from './imports'
+import { collectImportRefs, hasImportSupport, resolveImportRefs, type ImportRef } from './imports'
 import { isIgnoredRel, toPosixRel } from './ignore'
 import { resolveInside } from './paths'
 
 export const MAX_FILE_BYTES = 1024 * 1024
+/** Folder walks (outside git) stop listing after this many files, so a huge or wrong folder cannot stall the app. */
+export const MAX_WALK_FILES = 50_000
 const SCAN_CONCURRENCY = 32
 const BINARY_SNIFF_BYTES = 8000
+// Refuses to follow a symlink on the final path component where the platform supports it (Windows has no O_NOFOLLOW).
+const OPEN_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0
 
 export interface ScanOptions {
   /** Reuse an already loaded history instead of running git log again. */
@@ -26,13 +31,17 @@ export interface ScanFileOptions {
   git?: boolean
 }
 
+/**
+ * One file as read from disk. The text itself is not kept: import-capable files leave behind only their raw
+ * import references, which are small, and the text is garbage once the entry is built.
+ */
 interface Entry {
   rel: string
   lang: Lang
   bytes: number
   mtime: number
   loc: number
-  content?: string
+  refs?: ImportRef[]
 }
 
 /** Full scan of a folder. Files are listed by git when possible, otherwise by walking the directory. */
@@ -47,13 +56,15 @@ export async function scanRepo(root: string, opts: ScanOptions = {}): Promise<Re
   const churn = history.length > 0 ? churnCounts(history) : undefined
   const candidates = listed.filter((rel) => !isIgnoredRel(rel) && !isProbablyBinary(rel))
 
+  // Pass 1: read every file, keep metadata and import references. Pass 2 (below) matches the references
+  // against the full file set, which is only complete once pass 1 has finished.
   const entries = (await mapLimit(candidates, SCAN_CONCURRENCY, (rel) => readEntry(abs, rel))).filter(
     (e): e is Entry => e !== null
   )
   const known = new Set(entries.map((e) => e.rel))
 
   const files: FileNode[] = entries.map((e) =>
-    toNode(e, e.content !== undefined ? extractImports(e.rel, e.content, known) : [], churn)
+    toNode(e, e.refs ? resolveImportRefs(e.rel, e.refs, known) : [], churn)
   )
   files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 
@@ -67,7 +78,7 @@ export async function scanRepo(root: string, opts: ScanOptions = {}): Promise<Re
 }
 
 /**
- * Re-reads one file for incremental updates. Returns null when the file is missing, a directory,
+ * Re-reads one file for incremental updates. Returns null when the file is missing, a directory, a symlink,
  * ignored, binary, too large, or outside the repo.
  */
 export async function scanFile(root: string, rel: string, opts: ScanFileOptions = {}): Promise<FileNode | null> {
@@ -84,7 +95,7 @@ export async function scanFile(root: string, rel: string, opts: ScanFileOptions 
   if (opts.git && !opts.knownPaths?.has(posixRel) && (await isGitIgnored(abs, posixRel))) return null
 
   const known = opts.knownPaths ?? new Set((await listFiles(abs)).filter((r) => !isIgnoredRel(r)))
-  const imports = entry.content !== undefined ? extractImports(posixRel, entry.content, known) : []
+  const imports = resolveImportRefs(posixRel, entry.refs ?? [], known)
   return toNode(entry, imports, opts.churn)
 }
 
@@ -98,11 +109,15 @@ async function listFiles(abs: string): Promise<string[]> {
   return walkFiles(abs)
 }
 
-/** Directory walk used outside git: skips ignored segments and symlinks (no loops, no escapes). */
-async function walkFiles(abs: string): Promise<string[]> {
+/**
+ * Directory walk used outside git. Skips ignored segments and symlinks (no loops, no escapes), and stops at
+ * MAX_WALK_FILES with a logged warning.
+ */
+export async function walkFiles(abs: string, limit = MAX_WALK_FILES): Promise<string[]> {
   const out: string[] = []
   const pending: string[] = ['']
-  while (pending.length > 0) {
+  let truncated = false
+  walk: while (pending.length > 0) {
     const dirRel = pending.pop() as string
     let dirents: Dirent[]
     try {
@@ -112,33 +127,51 @@ async function walkFiles(abs: string): Promise<string[]> {
     }
     for (const d of dirents) {
       const rel = dirRel ? `${dirRel}/${d.name}` : d.name
+      if (d.isSymbolicLink()) continue
       if (d.isDirectory()) {
         if (!isIgnoredRel(d.name)) pending.push(rel)
       } else if (d.isFile()) {
+        if (out.length >= limit) {
+          truncated = true
+          break walk
+        }
         out.push(rel)
       }
     }
+  }
+  if (truncated) {
+    console.warn(`[skyline] ${abs} has more than ${limit} files; the listing stopped there`)
   }
   return out
 }
 
 // ---- per file ----------------------------------------------------------------------
 
-/** Stats, reads and measures one file. Import-capable files keep their text for the import pass. */
+/**
+ * Stats, reads and measures one file. Symlinks are refused: their target may sit outside the repo, and
+ * reading it would leak that file into the snapshot.
+ */
 async function readEntry(abs: string, rel: string): Promise<Entry | null> {
   const full = path.join(abs, ...rel.split('/'))
   let st: Stats
   try {
-    st = await fsp.stat(full)
+    st = await fsp.lstat(full)
   } catch {
     return null
   }
   if (!st.isFile() || st.size > MAX_FILE_BYTES) return null
   let buf: Buffer
+  let fh: FileHandle | undefined
   try {
-    buf = await fsp.readFile(full)
+    // The open repeats the symlink refusal, closing the gap between lstat and read.
+    fh = await fsp.open(full, fsConstants.O_RDONLY | OPEN_NOFOLLOW)
+    const opened = await fh.stat()
+    if (!opened.isFile() || opened.size > MAX_FILE_BYTES) return null
+    buf = await fh.readFile()
   } catch {
     return null
+  } finally {
+    await fh?.close()
   }
   if (looksBinary(buf)) return null
   const lang = langFromPath(rel)
@@ -148,7 +181,7 @@ async function readEntry(abs: string, rel: string): Promise<Entry | null> {
     bytes: buf.length,
     mtime: st.mtimeMs,
     loc: countLines(buf),
-    content: hasImportSupport(lang) ? buf.toString('utf8') : undefined
+    refs: hasImportSupport(lang) ? collectImportRefs(rel, buf.toString('utf8')) : undefined
   }
 }
 
