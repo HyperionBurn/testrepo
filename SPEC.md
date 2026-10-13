@@ -1,225 +1,186 @@
-# Loupe — Product & Engineering Spec
+# Skyline — Product & Engineering Spec
 
-> **Loupe** is a free, open-source, 100% offline AI photo culler for Windows.
-> Drop in a shoot (or a messy camera roll). Loupe finds the blinks, the blur, the
-> near-duplicates, picks the best frame of every burst, and writes star ratings
-> that Lightroom / Capture One read instantly. Then lets you *search your shoot
-> in plain English* — "bride laughing", "dog on the beach" — on your own machine.
+> **Skyline is mission control for your AI coding agents — rendered as a living city.**
+> Point it at a repo. Every file becomes a building, every folder a district.
+> Claude Code, Codex and friends appear as glowing builder drones that fly to the
+> files they touch; buildings rise, glow and get scaffolding as agents edit them.
+> Watch token burn and cost per agent in real time, replay what happened while you
+> were away, scrub through git history to watch the city grow from the first commit,
+> and get a plain-English digest written by a **local** LLM. 100% offline. Open source.
 
-## Why this exists (pain / market)
-- Photographers spend 2–6 hours culling every wedding/event (2,000–6,000 frames).
-- Paid tools do it with AI: Aftershoot ($15–45/mo), Narrative Select, FilterPixel, Imagen (cloud).
-  No polished open-source local alternative exists.
-- Consumer angle (bigger TAM): everyone has 20k+ photo camera-roll dumps full of
-  bursts, blurry shots and duplicates.
-- Viral hook: "Culled 3,000 wedding photos in 4 minutes. Offline. Free." + a
-  shareable "Loupe saved you 2h 41m" summary card.
+## Why
+- Devs now run several AI agents at once (Claude Code, Codex CLI, Cursor, Gemini CLI)
+  across many terminals. Nobody can see what they're doing, where, or what it costs.
+- Paid/closed analogs cover slices only (cloud agent dashboards, Conductor (macOS),
+  CodeSee/Swimm/DeepWiki for code maps). Nothing local, cross-agent and visual.
+- Viral hook: a 20-second screen capture of drones building a glowing city is the demo.
+  Story: "Skyline watched the 6 AI agents that built Skyline."
 
-## Stack (fixed — do not change)
-- Electron + **electron-vite** + React 18 + TypeScript (strict). Package manager: npm.
-- Packaging: **electron-builder**, Windows target `nsis` (x64) + `portable`. Built by
-  GitHub Actions on `windows-latest` (`.github/workflows/build.yml`).
-- Native/heavy deps: `sharp` (decode/resize/pixels), `exiftool-vendored`
-  (EXIF read, RAW embedded preview extraction, XMP sidecar writing).
-- AI runs in a **hidden BrowserWindow** ("AI worker", `src/worker/`) so it gets
-  WebGPU/WebGL/WASM acceleration on any GPU vendor:
-  - `@mediapipe/tasks-vision` FaceLandmarker (with blendshapes → blink detection).
-    Model `face_landmarker.task` + wasm files are **bundled** in `resources/models/` and
-    copied wasm from the npm package at build time (no CDN at runtime).
-  - `@huggingface/transformers` CLIP `Xenova/clip-vit-base-patch32` (image + text
-    embeddings). Downloaded once on first run to `app.getPath('userData')/models`, with
-    progress UI. After that, zero network.
-- Tests: `vitest` for pure logic (`src/shared`, `src/main` utilities).
+## Stack (fixed)
+- Electron 33 + electron-vite + React 18 + TypeScript strict, npm.
+- 3D: three + @react-three/fiber 8 + @react-three/drei 9 + @react-three/postprocessing 2.
+- Main: chokidar 4 (watch), `git` CLI via child_process (no native git libs),
+  node-llama-cpp 3 (optional local LLM; model downloaded on demand to userData).
+- Packaging: electron-builder → Windows nsis + portable via GitHub Actions windows-latest.
+- Tests: vitest for pure logic in `src/shared` and parsers in `src/main`.
 
-## Directory layout
+## Layout
 ```
-src/
-  shared/          # pure TS, no electron/node-only imports except types
-    types.ts       # ALL cross-process types (contract below)
-    ipc.ts         # channel name constants
-    scoring.ts     # scoring, grouping, decisions, reasons (pure)
-    search.ts      # cosine similarity + ranking (pure)
-  main/            # Electron main process
-    index.ts       # window creation (Win11 acrylic, hidden titlebar + overlay)
-    ipc.ts         # ipcMain handlers wiring
-    scanner.ts     # folder walk, file type detection
-    preview.ts     # RAW preview extraction + sharp thumbnails (cache)
-    metrics.ts     # sharpness (Laplacian variance), exposure stats
-    exif.ts        # capture time, camera, lens, iso, shutter, aperture, orientation
-    xmp.ts         # write XMP sidecars / ratings
-    exporter.ts    # copy/move keepers, move rejects to _Rejected (never delete)
-    project.ts     # per-folder cache at <folder>/.loupe/project.json
-    pipeline.ts    # orchestrates analysis; talks to AI worker; emits progress
-    aiBridge.ts    # creates hidden worker window, request/response over IPC
-  preload/
-    index.ts       # contextBridge exposing window.loupe (typed by LoupeAPI)
-  worker/          # hidden AI window (renderer context)
-    index.html
-    main.ts        # receives jobs, runs faces + clip, replies
-    faces.ts
-    clip.ts
-  renderer/        # the visible app
-    index.html
-    src/ (App.tsx, components/, screens/, styles/, lib/)
-resources/
-  models/          # face_landmarker.task (downloaded by scripts/fetch-models.mjs)
-  icon.png / icon.ico
-scripts/fetch-models.mjs
+src/shared/    types.ts (contract below), ipc.ts (channels), layout.ts (city layout, pure),
+               pricing.ts (token → $), lang.ts (extension → language + color)
+src/main/      index.ts, ipc.ts, repo/scan.ts (files, LOC, imports), repo/git.ts (history),
+               repo/watch.ts, agents/claude.ts, agents/codex.ts, agents/hub.ts (merges sources,
+               emits AgentEvents), agents/dispatch.ts (spawn agents), llm/local.ts (node-llama-cpp),
+               store.ts (recent repos, settings in userData/settings.json)
+src/preload/   index.ts  → window.skyline (SkylineAPI)
+src/renderer/src/
+               App.tsx, state/ (zustand store), city/ (three scene: City.tsx, Buildings.tsx,
+               Drones.tsx, Trails.tsx, Ground.tsx, Effects.tsx, CameraRig.tsx),
+               hud/ (glass UI: TitleBar, AgentDock, ActivityFeed, Timeline, Inspector,
+               DigestCard, DispatchSheet, CommandBar, Welcome), styles/glass.css
 ```
 
-## Core types (`src/shared/types.ts`) — the contract
+## Contract — `src/shared/types.ts`
 ```ts
-export type Verdict = 'keep' | 'maybe' | 'reject';
-export type RejectReason =
-  | 'eyes_closed' | 'blurry' | 'subject_soft' | 'overexposed' | 'underexposed'
-  | 'duplicate' | 'weaker_in_burst';
+export type Lang = 'ts'|'js'|'py'|'rs'|'go'|'java'|'cs'|'cpp'|'c'|'rb'|'php'|'swift'|'kt'
+  |'css'|'html'|'md'|'json'|'yaml'|'sh'|'sql'|'other';
 
-export interface FaceInfo {
-  box: { x: number; y: number; w: number; h: number }; // normalized 0..1
-  eyeBlinkLeft: number;   // 0..1 (mediapipe blendshape)
-  eyeBlinkRight: number;  // 0..1
-  eyesOpen: boolean;      // both blinks < 0.45
-  sharpness?: number;     // laplacian variance inside face box (filled by main)
-  smile?: number;         // (mouthSmileLeft+Right)/2
+export interface FileNode {
+  path: string;          // repo-relative, forward slashes
+  lang: Lang;
+  loc: number;           // lines of code
+  bytes: number;
+  mtime: number;         // ms
+  imports: string[];     // repo-relative paths this file imports (resolved, best-effort)
+  commits?: number;      // churn: number of commits touching it
+}
+export interface RepoSnapshot {
+  root: string; name: string; branch?: string;
+  files: FileNode[];     // excludes .git, node_modules, dist, build, out, .next, venv, binary/large files (>1MB)
+  scannedAt: number;
 }
 
-export interface ExifInfo {
-  captureTime?: number;  // ms epoch
-  camera?: string; lens?: string;
-  iso?: number; shutter?: string; aperture?: number; focalLength?: number;
-  width?: number; height?: number; orientation?: number;
+export interface CityBuilding {
+  path: string; x: number; z: number; w: number; d: number; h: number; // world units, y-up
+  lang: Lang; color: string; district: string;    // district = top-level dir ('' = root)
+}
+export interface CityDistrict { name: string; x: number; z: number; w: number; d: number; depth: number; }
+export interface CityLayout { buildings: CityBuilding[]; districts: CityDistrict[]; size: number; }
+
+export type AgentKind = 'claude-code' | 'codex' | 'unknown';
+export type AgentStatus = 'thinking' | 'editing' | 'reading' | 'running' | 'idle' | 'done';
+
+export interface AgentInfo {
+  id: string;               // session id
+  kind: AgentKind;
+  name: string;             // friendly: 'Claude · a81457' or subagent description
+  model?: string;
+  parentId?: string;        // subagent → parent session
+  cwd: string;
+  startedAt: number; lastActiveAt: number;
+  status: AgentStatus;
+  currentFile?: string;     // repo-relative
+  lastAction?: string;      // short human text e.g. 'Edit src/main/index.ts', 'Bash: npm test'
+  lastMessage?: string;     // last assistant text (truncated 280 chars)
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  costUsd: number;
+  filesTouched: string[];   // repo-relative, unique
+  edits: number; reads: number; commands: number;
+  color: string;            // stable hue from id
 }
 
-export interface PhotoMetrics {
-  sharpness: number;      // laplacian variance on 512px grayscale (global)
-  meanLuma: number;       // 0..255
-  clipHigh: number;       // fraction of pixels >= 250
-  clipLow: number;        // fraction of pixels <= 5
+export type AgentEventType = 'read' | 'edit' | 'create' | 'delete' | 'command' | 'message' | 'thinking' | 'tokens' | 'spawn' | 'end';
+export interface AgentEvent {
+  id: string;               // unique (e.g. message uuid + index)
+  agentId: string;          // 'fs' for unattributed filesystem changes
+  type: AgentEventType;
+  ts: number;
+  file?: string;            // repo-relative
+  text?: string;            // command / message snippet
+  linesAdded?: number; linesRemoved?: number;
 }
 
-export interface Photo {
-  id: string;             // stable hash of relative path
-  path: string;           // absolute path of original
-  relPath: string;
-  name: string;
-  isRaw: boolean;
-  previewPath: string;    // cached JPEG ~1600px long edge (file path)
-  thumbPath: string;      // cached JPEG ~400px long edge
-  exif: ExifInfo;
-  metrics?: PhotoMetrics;
-  faces?: FaceInfo[];
-  embedding?: number[];   // CLIP 512-d, L2 normalized (stored in project cache)
-  aesthetic?: number;     // 0..1 zero-shot CLIP aesthetic
-  // results of scoring:
-  score?: number;         // 0..100
-  verdict?: Verdict;
-  reasons?: RejectReason[];
-  groupId?: string;
-  isGroupBest?: boolean;
-  // user overrides (always win):
-  userVerdict?: Verdict;
-  rating?: number;        // 0..5
-}
+export interface GitCommit { hash: string; ts: number; author: string; subject: string;
+  files: { path: string; added: number; removed: number }[]; }
 
-export interface Group { id: string; photoIds: string[]; bestId: string; }
+export interface Digest { generatedAt: number; text: string; model: string; }
 
-export interface Project {
-  version: 1;
-  folder: string;
-  createdAt: number;
-  photos: Photo[];
-  groups: Group[];
-  settings: CullSettings;
-  stats?: CullStats;
-}
+export interface DispatchRequest { kind: 'claude-code' | 'codex'; prompt: string; worktree: boolean; }
 
-export interface CullSettings {
-  strictness: 'gentle' | 'balanced' | 'ruthless';
-  groupSimilarity: number;  // cosine threshold, default 0.92
-  groupMaxGapSec: number;   // default 8
-  rejectBlinks: boolean;    // default true
-}
+export interface LlmStatus { state: 'absent'|'downloading'|'loading'|'ready'|'error'; progress?: number; model?: string; error?: string; }
 
-export interface CullStats {
-  total: number; keep: number; maybe: number; reject: number;
-  blinks: number; blurry: number; duplicates: number; groups: number;
-  secondsSaved: number;     // total * 4s heuristic minus analysis time
-  analysisMs: number;
-}
+export interface Settings { recentRepos: string[]; claudeDir?: string; codexDir?: string; llmModel: string; }
 
-export type AnalysisPhase = 'scanning' | 'previews' | 'models' | 'faces' | 'embeddings' | 'scoring' | 'done' | 'error';
-export interface AnalysisProgress {
-  phase: AnalysisPhase; done: number; total: number;
-  current?: string;         // file name
-  live: { blinks: number; blurry: number; duplicates: number; faces: number };
-  message?: string;
-}
-
-export interface SearchHit { id: string; score: number; }
-
-export type ExportMode = 'xmp' | 'copy_keepers' | 'move_rejects';
-
-export interface LoupeAPI {
+export interface SkylineAPI {
   pickFolder(): Promise<string | null>;
-  openProject(folder: string): Promise<Project | null>;   // cached result if any
-  analyze(folder: string, settings: CullSettings): Promise<Project>;
-  cancel(): Promise<void>;
-  onProgress(cb: (p: AnalysisProgress) => void): () => void;
-  setVerdict(id: string, verdict: Verdict | null): Promise<void>;
-  setRating(id: string, rating: number): Promise<void>;
-  rescore(settings: CullSettings): Promise<Project>;
-  search(query: string): Promise<SearchHit[]>;
-  exportResults(mode: ExportMode, dest?: string): Promise<{ written: number; dest?: string }>;
-  revealInExplorer(path: string): Promise<void>;
-  fileUrl(path: string): string;  // -> 'loupe-file://...' custom protocol URL
+  openRepo(root: string): Promise<RepoSnapshot>;              // scans + starts watching + starts agent hub
+  getAgents(): Promise<AgentInfo[]>;
+  getEvents(sinceTs?: number): Promise<AgentEvent[]>;         // history for replay (current repo)
+  getHistory(limit?: number): Promise<GitCommit[]>;           // newest first
+  readFile(path: string): Promise<string>;                    // repo-relative, first 200KB
+  dispatch(req: DispatchRequest): Promise<{ agentId: string }>;
+  stopAgent(agentId: string): Promise<void>;                  // only for dispatched ones
+  llmStatus(): Promise<LlmStatus>;
+  llmDownload(): Promise<void>;
+  digest(sinceTs: number): Promise<Digest>;                   // summary of agent events since ts
+  explain(path: string): Promise<string>;                     // LLM explanation of a file
+  getSettings(): Promise<Settings>;
+  on(channel: 'agents', cb: (a: AgentInfo[]) => void): () => void;
+  on(channel: 'event', cb: (e: AgentEvent) => void): () => void;
+  on(channel: 'repo', cb: (s: RepoSnapshot) => void): () => void;   // after fs changes (debounced 500ms)
+  on(channel: 'llm', cb: (s: LlmStatus) => void): () => void;
   window: { minimize(): void; maximize(): void; close(): void };
+  platform: string;
 }
 ```
 
-## Scoring rules (`src/shared/scoring.ts`)
-- Normalize sharpness per shoot (percentile within set) — absolute thresholds fail across cameras.
-- Face-aware: if faces exist, subject sharpness = max face sharpness (bokeh is intentional).
-- `blurry` if sharpness percentile < strictness cutoff (gentle 5%, balanced 12%, ruthless 20%)
-  AND absolute laplacian below a floor.
-- `eyes_closed` if any face with box area > 1.5% of frame has `eyesOpen === false`.
-- Exposure: `overexposed` clipHigh > 0.25, `underexposed` meanLuma < 35 and clipLow > 0.4.
-- Grouping: sort by captureTime (fallback name); consecutive photos join a group when
-  cosine(embedding) ≥ groupSimilarity and gap ≤ groupMaxGapSec (or no time info).
-- Score 0..100 = 40 sharpness pct + 25 eyes/face quality + 20 aesthetic + 15 exposure.
-- Best in group = top score. Non-best in group → `maybe` (balanced) / `reject` with
-  `weaker_in_burst` (ruthless) / `maybe` (gentle). Near-identical (cos ≥ 0.985) → `duplicate`.
-- Verdict: any hard reason → reject; group best & score ≥ 55 → keep; else maybe/keep by score.
-- `userVerdict` always overrides. Ratings: keep→ 3★ (best in group 4★, top 10% 5★), maybe→2, reject→1 (written only to XMP with label).
+## Agent sources
+- **Claude Code**: `~/.claude/projects/<encoded cwd>/<sessionId>.jsonl` and subagents at
+  `~/.claude/projects/<encoded cwd>/<sessionId>/subagents/*.jsonl`. Encoded cwd = cwd with
+  every non-alphanumeric char replaced by `-` (Windows `C:\dev\app` → `C--dev-app`).
+  Lines: `{type:'assistant', message:{model, content:[{type:'text'|'tool_use'|'thinking'...}],
+  usage:{input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens}},
+  cwd, sessionId, timestamp, uuid}` and `{type:'user', message:{content:[{type:'tool_result'}]}}`.
+  Tools → events: Read/Grep/Glob → read; Edit/MultiEdit → edit; Write → create/edit;
+  Bash → command; Task/Agent → spawn. `input.file_path` is absolute → make repo-relative.
+  Note: assistant messages are streamed as several lines sharing `message.id` — count usage once per message id.
+- **Codex CLI**: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, lines
+  `{timestamp, type, payload}`; `session_meta.payload.cwd`; `response_item` payload
+  `function_call` (name 'shell', arguments JSON with command[]) / `custom_tool_call`
+  name 'apply_patch' (input contains `*** Update File: <path>` / `*** Add File:`);
+  `event_msg` payload type `token_count` with `info.total_token_usage`. Parse defensively.
+- **Unattributed** (Cursor, humans, others): chokidar changes not explained by an agent
+  event within ±3 s → agentId `'fs'`.
+- Tail files incrementally (remember byte offsets), poll every 1 s + fs.watch hints.
+- Only sessions whose cwd is the repo root or inside it count.
 
-## XMP mapping
-- `xmp:Rating` (reject = -1 per Lightroom convention, configurable later), `xmp:Label`
-  ("Green" keep, "Yellow" maybe, "Red" reject). Sidecar `<name>.xmp` beside RAWs;
-  for JPEGs also write a sidecar (never modify originals).
+## Pricing (`src/shared/pricing.ts`) per 1M tokens (input / output / cache read / cache write)
+opus 15/75/1.5/18.75 · sonnet 3/15/0.3/3.75 · haiku 1/5/0.1/1.25 · gpt-5/codex 1.25/10/0.125/0 · default sonnet. Match by substring of model id.
 
-## Design language — "Liquid Glass" (Apple-inspired)
-- Dark-first, also light. Window uses Win11 acrylic (`backgroundMaterial: 'acrylic'`) and
-  the app paints a slow, blurred, colorful ambient mesh behind glass panes.
-- Glass surfaces: `backdrop-filter: blur(28px) saturate(180%)`, translucent fill
-  (`rgba(255,255,255,0.08)` dark / `0.55` light), 1px inner highlight
-  (`inset 0 1px 0 rgba(255,255,255,0.25)`), specular gradient sheen top edge, soft
-  long shadow, large radii (20–28px), capsule buttons, 8pt spacing grid.
-- Typography: "Segoe UI Variable Display/Text" (native Windows), fallback Inter.
-  Tight tracking on large titles. SF-like hierarchy: 34 / 22 / 17 / 13.
-- Motion: spring easing `cubic-bezier(.2,.8,.2,1)`, 240–420ms; respect `prefers-reduced-motion`.
-- Color: verdict tints — keep `#30D158`, maybe `#FFD60A`, reject `#FF453A`; accent `#0A84FF`.
-- Floating glass toolbar (bottom center, capsule), glass sidebar, glass loupe HUD.
+## City layout (`src/shared/layout.ts`, pure + tested)
+- Squarified treemap of the directory tree, weight = max(loc, 8). Districts recursively
+  nested with 1.2-unit streets (padding) per depth; buildings inset 15% (plazas between).
+- Building height h = 0.6 + 2.2·log2(1 + loc/20). Footprint from treemap cell.
+- Deterministic: same snapshot → same layout. Sort children by name for stability.
+- Total city ~ 120×120 units regardless of repo size (scale treemap).
 
-## Screens
-1. **Welcome** — Ambient mesh, huge "Drop a shoot." title, glass drop zone, "Choose
-   folder" capsule, recent projects, tagline "Private. Offline. Free."
-2. **Analyzing** — Big progress ring, phase label, live counters (blinks caught, blurry,
-   duplicates, faces), thumbnails streaming into a soft mosaic.
-3. **Library** — Sidebar filters (All / Keepers / Maybe / Rejects + reason chips),
-   semantic search field ("Search your shoot…"), grid with verdict tint dots, burst
-   stacks (grouped cards with count badge), floating toolbar (strictness slider,
-   Export).
-4. **Loupe view** — Full image, filmstrip of the group, **Face strip**: zoomed crops of
-   each face with eye status (Narrative-Select-style), reasons, EXIF HUD. Keys:
-   ←/→ navigate, P keep, X reject, U maybe, 0–5 rating, Space toggle zoom 100%, Esc back.
-5. **Summary / Export** — "Loupe saved you 2h 41m" share card (render to PNG), export
-   options (XMP for Lightroom, copy keepers, move rejects to `_Rejected`).
+## Design — "Liquid Glass"
+- The 3D city fills the window edge-to-edge; all UI floats above it as glass.
+- Night-time city: deep navy→black gradient sky, faint fog, ground with subtle grid,
+  buildings dark glassy with emissive edges tinted by language color; edited buildings
+  pulse bright with scaffolding wireframe + rising particles; drones = glowing orbs with
+  a soft halo + light trail, colored per agent; light beam from drone to target building.
+  Bloom postprocessing, gentle auto-orbit when idle.
+- Glass panels: `backdrop-filter: blur(30px) saturate(180%)`; fill rgba(20,24,38,.45);
+  1px border rgba(255,255,255,.12); inner top highlight; radius 22–28; capsule buttons.
+- Type: Segoe UI Variable (Windows), Inter fallback; tabular numbers for meters.
+- Motion: springs, 240–420ms; reduced-motion respected.
+- Layout: custom 44px title bar (drag region, repo name, branch, live dot);
+  left **Agent Dock** (cards per agent: color dot, name, status pill, current file, tokens,
+  $ cost, sparkline); right **Inspector** (selected building: path, LOC, lang, agents who
+  touched it, recent events, "Explain" via local LLM, file preview);
+  bottom **Timeline** capsule (Live ⟷ replay scrubber over agent events; toggle Git time-lapse);
+  top-center **Command bar** (⌘K/Ctrl+K: jump to file, dispatch agent, digest);
+  **Digest card** ("While you were away…").
+- Welcome screen (no repo): city silhouette idling in background, "Open a repository",
+  recent repos, detected agent sessions list ("3 Claude Code sessions found").
