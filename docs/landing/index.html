@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skyline: Mission control for AI coding agents</title>
+<meta name="description" content="Skyline is a free, open-source, 100% local Windows app that renders your repository as a living 3D city and shows every AI coding agent working in it.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#050914">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #050914;
+    --bg-2: #0a1126;
+    --ink: #e8edf7;
+    --ink-2: #aab4cc;
+    --ink-3: #7b87a4;
+    --accent: #3b82f6;
+    --accent-hi: #6aa8ff;
+    --cyan: #5ee0ff;
+    --line: rgba(255, 255, 255, 0.12);
+    --glass: rgba(20, 24, 38, 0.45);
+    --radius: 24px;
+    --gutter: 16px;
+    --maxw: 1120px;
+    --font: "Segoe UI Variable", Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    max-width: 100%;
+  }
+
+  body {
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--ink);
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(1100px 620px at 78% -8%, rgba(59, 130, 246, 0.22), transparent 60%),
+      radial-gradient(900px 560px at 6% 18%, rgba(94, 224, 255, 0.10), transparent 60%),
+      linear-gradient(180deg, var(--bg-2) 0%, var(--bg) 46%, #03060d 100%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  img { display: block; max-width: 100%; height: auto; }
+  a { color: inherit; }
+  h1, h2, h3, p { margin: 0; }
+
+  .wrap {
+    width: 100%;
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 0 var(--gutter);
+  }
+
+  /* ---- Liquid Glass primitives ---------------------------------------- */
+
+  .glass {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.015)),
+      var(--glass);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    backdrop-filter: blur(30px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.12),
+      0 30px 60px -28px rgba(0, 0, 0, 0.7);
+  }
+
+  .capsule {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 10px 20px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--ink);
+    font: 600 15px/1 var(--font);
+    text-decoration: none;
+    white-space: nowrap;
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    backdrop-filter: blur(20px) saturate(160%);
+    transition: transform 240ms ease, background-color 240ms ease, box-shadow 240ms ease;
+  }
+  .capsule:hover { background: rgba(255, 255, 255, 0.12); transform: translateY(-1px); }
+  .capsule:focus-visible,
+  .link:focus-visible,
+  .nav a:focus-visible {
+    outline: 2px solid var(--accent-hi);
+    outline-offset: 3px;
+  }
+
+  .capsule--primary {
+    border-color: rgba(147, 197, 253, 0.45);
+    background: linear-gradient(180deg, #4f94ff 0%, #2f7cf6 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.35),
+      0 12px 30px -10px rgba(47, 124, 246, 0.75);
+  }
+  .capsule--primary:hover { background: linear-gradient(180deg, #62a2ff 0%, #3b86f8 100%); }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--ink-2);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #3ddc84;
+    box-shadow: 0 0 10px #3ddc84;
+  }
+
+  .muted { color: var(--ink-2); }
+  .faint { color: var(--ink-3); }
+
+  /* ---- Header ---------------------------------------------------------- */
+
+  .top {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  .top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 56px;
+    padding: 8px 10px 8px 16px;
+    border-radius: 999px;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 16px;
+    text-decoration: none;
+    letter-spacing: -0.01em;
+  }
+  .brand svg { width: 28px; height: 28px; flex: none; }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .nav a {
+    padding: 8px 12px;
+    border-radius: 999px;
+    color: var(--ink-2);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .nav a:hover { color: var(--ink); background: rgba(255, 255, 255, 0.06); }
+  .nav .nav-hide { display: none; }
+
+  /* ---- Hero ------------------------------------------------------------ */
+
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding: 56px 0 40px;
+    text-align: center;
+  }
+  .hero::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 40px;
+    width: min(900px, 100%);
+    height: 420px;
+    transform: translateX(-50%);
+    background: radial-gradient(closest-side, rgba(59, 130, 246, 0.28), transparent 70%);
+    filter: blur(20px);
+    pointer-events: none;
+    z-index: -1;
+  }
+  .hero h1 {
+    margin: 22px auto 0;
+    max-width: 16ch;
+    font-size: clamp(2.4rem, 8vw, 4.75rem);
+    line-height: 1.02;
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    background: linear-gradient(180deg, #ffffff 0%, #b9c7e6 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .lede {
+    margin: 18px auto 0;
+    max-width: 58ch;
+    font-size: clamp(1.02rem, 2.4vw, 1.2rem);
+    color: var(--ink-2);
+  }
+  .cta-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 28px;
+  }
+  .fineprint {
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--ink-3);
+  }
+
+  .hero-shot {
+    margin: 44px 0 0;
+    padding: 10px;
+    border-radius: 28px;
+  }
+  .hero-shot img {
+    width: 100%;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  /* ---- Sections -------------------------------------------------------- */
+
+  section { padding: 56px 0; }
+
+  .section-head {
+    max-width: 680px;
+    margin: 0 auto 28px;
+    text-align: center;
+  }
+  .section-head h2 {
+    font-size: clamp(1.7rem, 5vw, 2.5rem);
+    line-height: 1.12;
+    font-weight: 750;
+    letter-spacing: -0.025em;
+  }
+  .section-head p { margin-top: 12px; color: var(--ink-2); }
+
+  /* Feature rows: text and image alternate; stacked on phones. */
+  .feature {
+    display: grid;
+    gap: 24px;
+    align-items: center;
+    padding: 20px;
+  }
+  .feature + .feature { margin-top: 20px; }
+  .feature-copy h3 {
+    font-size: clamp(1.4rem, 4vw, 1.9rem);
+    line-height: 1.15;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .feature-copy p { margin-top: 12px; color: var(--ink-2); }
+  .feature-copy ul {
+    margin: 16px 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 8px;
+  }
+  .feature-copy li {
+    position: relative;
+    padding-left: 22px;
+    color: var(--ink-2);
+    font-size: 15px;
+  }
+  .feature-copy li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.55em;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 10px rgba(94, 224, 255, 0.8);
+  }
+  .feature-shot {
+    position: relative;
+    overflow: hidden;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    aspect-ratio: 16 / 10;
+    background: #070b18;
+  }
+  .feature-shot img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .feature-shot--city img { object-position: 50% 62%; }
+  .feature-shot--inspector img { object-fit: cover; object-position: 80% 50%; }
+  .feature-shot--welcome img { object-fit: cover; object-position: 50% 50%; }
+
+  /* ---- Privacy --------------------------------------------------------- */
+
+  .privacy {
+    display: grid;
+    gap: 16px;
+  }
+  .privacy-card {
+    padding: 26px;
+  }
+  .privacy-card h3 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .privacy-card p {
+    margin-top: 8px;
+    color: var(--ink-2);
+    font-size: 15px;
+  }
+  .stamp {
+    display: inline-block;
+    margin-bottom: 14px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #bff3ff;
+    background: rgba(94, 224, 255, 0.12);
+    border: 1px solid rgba(94, 224, 255, 0.3);
+  }
+
+  /* ---- Download -------------------------------------------------------- */
+
+  .download {
+    padding: 36px 24px;
+    text-align: center;
+  }
+  .download h2 {
+    font-size: clamp(1.6rem, 5vw, 2.3rem);
+    font-weight: 750;
+    letter-spacing: -0.02em;
+  }
+  .download > p { margin-top: 10px; color: var(--ink-2); }
+  .download .cta-row { margin-top: 24px; }
+  .build {
+    max-width: 520px;
+    margin: 26px auto 0;
+    text-align: left;
+    font-size: 14px;
+    color: var(--ink-2);
+  }
+  .build code {
+    display: block;
+    margin-top: 10px;
+    padding: 14px 16px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--line);
+    color: #cfe3ff;
+    font: 500 14px/1.6 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* ---- Footer ---------------------------------------------------------- */
+
+  footer {
+    padding: 36px 0 48px;
+    color: var(--ink-3);
+    font-size: 14px;
+  }
+  .foot {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    align-items: flex-start;
+    padding: 22px 24px;
+  }
+  .foot nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+  }
+  .foot a {
+    color: var(--ink-2);
+    text-decoration: none;
+  }
+  .foot a:hover { color: var(--ink); text-decoration: underline; }
+
+  /* ---- Wider screens --------------------------------------------------- */
+
+  @media (min-width: 640px) {
+    :root { --gutter: 24px; }
+    .nav .nav-hide { display: inline-block; }
+    .privacy { grid-template-columns: repeat(2, 1fr); }
+    .foot { flex-direction: row; justify-content: space-between; align-items: center; }
+  }
+
+  @media (min-width: 900px) {
+    :root { --gutter: 32px; }
+    .hero { padding-top: 84px; }
+    .hero-shot { margin-top: 60px; }
+    section { padding: 88px 0; }
+    .feature {
+      grid-template-columns: 1fr 1.25fr;
+      gap: 48px;
+      padding: 28px;
+    }
+    .feature--reverse .feature-copy { order: 2; }
+    .feature--reverse .feature-shot { order: 1; }
+    .privacy { grid-template-columns: repeat(4, 1fr); }
+    .download { padding: 56px 40px; }
+  }
+
+  /* ---- Motion ---------------------------------------------------------- */
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+      scroll-behavior: auto !important;
+    }
+    .capsule:hover { transform: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="top-bar glass">
+      <a class="brand" href="#top" aria-label="Skyline home">
+        <svg viewBox="0 0 28 28" aria-hidden="true">
+          <rect width="28" height="28" rx="7" fill="#2f7cf6"/>
+          <rect x="6" y="13" width="3" height="9" rx="1.2" fill="#eaf3ff"/>
+          <rect x="11" y="8" width="3" height="14" rx="1.2" fill="#eaf3ff"/>
+          <rect x="16" y="11" width="3" height="11" rx="1.2" fill="#eaf3ff"/>
+          <rect x="21" y="6" width="3" height="16" rx="1.2" fill="#eaf3ff"/>
+        </svg>
+        Skyline
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a class="nav-hide" href="#features">Features</a>
+        <a class="nav-hide" href="#privacy">Privacy</a>
+        <a class="nav-hide" href="../../">GitHub</a>
+        <a href="#download">Download</a>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+  <div class="wrap">
+    <div class="hero">
+      <span class="eyebrow"><span class="dot" aria-hidden="true"></span>Free &middot; Open source &middot; 100% local</span>
+      <h1>Watch your agents build.</h1>
+      <p class="lede">Mission control for your AI coding agents, rendered as a living city. Every file is a building. Every Claude Code or Codex agent is a drone, flying to the files it edits.</p>
+
+      <div class="cta-row">
+        <a class="capsule capsule--primary" href="../../releases">Download for Windows</a>
+        <a class="capsule" href="../../">View on GitHub</a>
+      </div>
+      <p class="fineprint">Windows x64 &middot; Installer or portable &middot; MIT licensed</p>
+
+      <figure class="hero-shot glass">
+        <img src="../screenshots/city.png" width="1280" height="873" alt="Skyline showing a repository as a glowing night city, with Claude Code and Codex agent drones working across its districts and the agent dock on the left." fetchpriority="high">
+      </figure>
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Every agent, in one place.</h2>
+        <p>Skyline reads the session logs your agents already write, and draws what they are doing as you watch.</p>
+      </div>
+
+      <article class="feature glass">
+        <div class="feature-copy">
+          <h3>Click any file. See who touched it.</h3>
+          <p>The Inspector shows the file's path, size, commits and imports, plus every agent that edited or read it and a read-only preview.</p>
+          <ul>
+            <li>Explain the file with a local model</li>
+            <li>Show import arcs in and out of the selected building</li>
+            <li>Recent activity, from live or replayed events</li>
+          </ul>
+        </div>
+        <div class="feature-shot feature-shot--inspector">
+          <img src="../screenshots/inspector.png" width="1280" height="873" loading="lazy" alt="Skyline Inspector panel open beside the city, showing a selected TypeScript file, its line count, commits, the agents that touched it, and its imports.">
+        </div>
+      </article>
+
+      <article class="feature glass feature--reverse">
+        <div class="feature-copy">
+          <h3>Cost and tokens, per agent, as they run.</h3>
+          <p>The agent dock tracks each session and each subagent, nested under the session that spawned it. Costs use a model price table that lives in one readable file.</p>
+          <ul>
+            <li>Input, output and cache tokens per agent</li>
+            <li>Replay recent agent activity, or scrub git history from the first commit</li>
+            <li>Dispatch a new agent in its own git worktree</li>
+          </ul>
+        </div>
+        <div class="feature-shot feature-shot--city">
+          <img src="../screenshots/city.png" width="1280" height="873" loading="lazy" alt="Close view of the glowing city showing agent drones over several districts, with the agent dock and activity timeline on screen.">
+        </div>
+      </article>
+
+      <article class="feature glass">
+        <div class="feature-copy">
+          <h3>Start from what is already there.</h3>
+          <p>Open any repository, or try the demo city. Skyline finds the recent Claude Code and Codex sessions on this machine that belong to it, so you can start watching right away.</p>
+          <ul>
+            <li>Recent repositories, one click away</li>
+            <li>Detected agent sessions listed on the welcome screen</li>
+            <li>Works without an account or a network connection</li>
+          </ul>
+        </div>
+        <div class="feature-shot feature-shot--welcome">
+          <img src="../screenshots/welcome.png" width="1440" height="900" loading="lazy" alt="Skyline welcome screen: Watch your agents build, with buttons to open a repository or try the demo city.">
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section id="privacy">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Your code and transcripts stay on your machine.</h2>
+        <p>Skyline is local-first by design. There is no account, no telemetry and no cloud service.</p>
+      </div>
+
+      <div class="privacy">
+        <div class="privacy-card glass">
+          <span class="stamp">Reads</span>
+          <h3>Local logs and your repo</h3>
+          <p>Claude Code transcripts in ~/.claude/projects, Codex rollouts in ~/.codex/sessions, and your repository files and git history.</p>
+        </div>
+        <div class="privacy-card glass">
+          <span class="stamp">Sends</span>
+          <h3>Nothing</h3>
+          <p>Skyline does not upload your code, prompts or transcripts. The app's window is locked down by a content security policy that allows it to talk only to itself.</p>
+        </div>
+        <div class="privacy-card glass">
+          <span class="stamp">Downloads</span>
+          <h3>One optional model</h3>
+          <p>The only network request is the local model download from Hugging Face, about 1.1 GB, and only when you click the button.</p>
+        </div>
+        <div class="privacy-card glass">
+          <span class="stamp">Offline</span>
+          <h3>Works without a model</h3>
+          <p>Digests and explanations fall back to a deterministic summary, so everything still works with no model and no connection.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="download">
+    <div class="wrap">
+      <div class="download glass">
+        <h2>Get Skyline for Windows.</h2>
+        <p>Free, open source and MIT licensed. Choose the installer, or the portable exe if you would rather not install anything.</p>
+        <div class="cta-row">
+          <a class="capsule capsule--primary" href="../../releases">Download the latest release</a>
+          <a class="capsule" href="../ARCHITECTURE.md">How it works</a>
+        </div>
+        <div class="build">
+          Prefer to build it yourself? Requires Node.js 22.
+          <code>npm ci
+npm run dev        # run the app
+npm run dist:win   # build the installers</code>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot glass">
+      <span>Skyline &middot; MIT licensed &middot; &copy; 2026 Skyline contributors</span>
+      <nav aria-label="Footer">
+        <a href="../../">GitHub</a>
+        <a href="../../releases">Releases</a>
+        <a href="../ARCHITECTURE.md">Architecture</a>
+        <a href="../../CONTRIBUTING.md">Contributing</a>
+        <a href="../../LICENSE">License</a>
+      </nav>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
