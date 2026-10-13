@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { promises as fsp } from 'node:fs'
 import * as path from 'node:path'
 import { eventChannel, IPC, type EventChannel } from '@shared/ipc'
@@ -197,11 +197,15 @@ export function registerIpc(win: BrowserWindow): void {
     const root = requireSession().root
     const r = (typeof req === 'object' && req !== null ? req : {}) as Partial<DispatchRequest>
     if (r.kind !== 'claude-code' && r.kind !== 'codex') throw new Error('Unknown agent kind')
-    const result = await dispatchAgent(root, {
-      kind: r.kind,
-      prompt: typeof r.prompt === 'string' ? r.prompt : '',
-      worktree: r.worktree === true
-    })
+    const result = await dispatchAgent(
+      root,
+      {
+        kind: r.kind,
+        prompt: typeof r.prompt === 'string' ? r.prompt : '',
+        worktree: r.worktree === true
+      },
+      { logDir: path.join(app.getPath('userData'), 'logs') }
+    )
     return { agentId: result.agentId }
   })
 

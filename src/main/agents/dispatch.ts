@@ -1,23 +1,29 @@
 // Starts Claude Code or Codex CLI runs for a repo and keeps a registry so they can be stopped.
+// Each run writes its output to a log file rather than a pipe, so it does not die when Skyline quits.
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { promises as fsp, constants as fsConstants } from 'node:fs'
+import { closeSync, constants as fsConstants, mkdirSync, openSync, promises as fsp } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { createInterface } from 'node:readline'
 import type { DispatchRequest } from '../../shared/types'
 import { findCodexRollout } from './recent'
 
 const CLAUDE_HINT = 'Claude Code CLI not found on PATH — install it from https://claude.com/claude-code'
 const CODEX_HINT = 'Codex CLI not found on PATH — install it with: npm i -g @openai/codex'
 const CLAUDE_ID_TIMEOUT_MS = 20_000
+const CLAUDE_LOG_POLL_MS = 200
+/** After the pending id is returned, keep looking for the real session id this long (1 Hz). */
+const CLAUDE_LATE_LINK_MS = 5 * 60_000
+const CLAUDE_LATE_POLL_MS = 1000
 const CODEX_LINK_TIMEOUT_MS = 60_000
 const CODEX_LINK_POLL_MS = 500
 const KILL_ESCALATE_MS = 3_000
 const MAX_PROMPT_CHARS = 100_000
 /** cmd.exe rejects command lines longer than 8191 characters; leave room for the rest of the line. */
 const WIN_MAX_PROMPT_CHARS = 7000
-const STDERR_TAIL_CHARS = 2000
+/** The session id is in the first stream-json lines, so the head of the log is enough. */
+const LOG_HEAD_BYTES = 64 * 1024
+const ERROR_LOG_CHARS = 2000
 
 export interface DispatchResult {
   agentId: string
@@ -31,6 +37,8 @@ export interface DispatchOptions {
   codexHome?: string
   /** Poll interval while looking for a Codex rollout file. Default 500 ms. */
   codexPollMs?: number
+  /** Folder for per-run logs (dispatch-<id>.log). Default: the OS temp dir under skyline-logs. */
+  logDir?: string
 }
 
 interface Running {
@@ -59,9 +67,11 @@ const linkedRollouts = new Set<string>()
 
 /**
  * Starts an agent in `root` (or in a fresh git worktree when req.worktree is set).
- * Claude Code resolves with its real session id once the stream reports it, or with 'pending-<id>'
+ * Claude Code resolves with its real session id once its log shows it, or with 'pending-<id>'
  * after 20 s. Codex resolves as soon as the process spawns with 'codex-<id>'; its own session id is
  * registered as an alias once its rollout file appears. stopAgent accepts either id.
+ * Output goes to dispatch-<id>.log under opts.logDir. The processes are detached and unref'd, so
+ * they keep running after Skyline exits.
  */
 export async function dispatchAgent(root: string, req: DispatchRequest, opts: DispatchOptions = {}): Promise<DispatchResult> {
   if (req.kind !== 'claude-code' && req.kind !== 'codex') throw new Error(`Unknown agent kind: ${String(req.kind)}`)
@@ -77,10 +87,11 @@ export async function dispatchAgent(root: string, req: DispatchRequest, opts: Di
 
   const shortid = randomBytes(4).toString('hex')
   const cwd = req.worktree ? await createWorktree(root, shortid) : root
+  const logFile = logFileFor(opts, shortid)
 
   return req.kind === 'claude-code'
-    ? startClaude(cwd, prompt, shortid, opts)
-    : startCodex(cwd, prompt, shortid, opts)
+    ? startClaude(cwd, prompt, shortid, logFile, opts)
+    : startCodex(cwd, prompt, shortid, logFile, opts)
 }
 
 /**
@@ -108,13 +119,21 @@ export function runningDispatched(): RunningAgent[] {
 
 // ---- Claude Code --------------------------------------------------------------------
 
-function startClaude(cwd: string, prompt: string, shortid: string, opts: DispatchOptions): Promise<DispatchResult> {
+function startClaude(cwd: string, prompt: string, shortid: string, logFile: string, opts: DispatchOptions): Promise<DispatchResult> {
   const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits']
-  const proc = spawnTool('claude', args, cwd)
+  const out = openLog(logFile)
+  let proc: ChildProcess
+  try {
+    proc = spawnTool('claude', args, cwd, out)
+  } finally {
+    closeSync(out) // the child keeps its own copy of the descriptor
+  }
+  proc.unref()
+
   const pendingId = `pending-${shortid}`
   const entry: Running = { keys: new Set([pendingId]), proc, exited: false, kind: 'claude-code', cwd }
-  const stderr = tailBuffer(STDERR_TAIL_CHARS)
   const timeoutMs = opts.claudeIdTimeoutMs ?? CLAUDE_ID_TIMEOUT_MS
+  const deadline = Date.now() + timeoutMs
   let settled = false
 
   return new Promise<DispatchResult>((resolve, reject) => {
@@ -123,44 +142,51 @@ function startClaude(cwd: string, prompt: string, shortid: string, opts: Dispatc
       registry.set(id, entry)
       if (settled) return
       settled = true
-      clearTimeout(timer)
       resolve({ agentId: id, proc })
     }
     const fail = (err: Error): void => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
       reject(err)
     }
-    const timer = setTimeout(() => settle(pendingId), timeoutMs)
 
     registry.set(pendingId, entry)
-    logStarted(entry, pendingId)
-    proc.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk.toString('utf8')))
+    logStarted(entry, pendingId, logFile)
     proc.once('error', (err) => {
       unregister(entry)
       fail(isMissing(err) ? new Error(CLAUDE_HINT) : err)
     })
-    proc.once('exit', () => {
+    proc.once('exit', (code) => {
       entry.exited = true
       unregister(entry)
-    })
-    proc.once('close', (code) => {
-      fail(new Error(`Claude Code exited before it started (code ${code ?? 'null'}). ${stderr.text()}`.trim()))
+      if (settled) return
+      // One last look at the log: a run that prints its id and exits at once still resolves.
+      void (async () => {
+        const sid = await sessionIdFromLog(logFile)
+        if (sid) settle(sid)
+        else fail(new Error(`Claude Code exited before it started (code ${code ?? 'null'}). ${await logHead(logFile)}`.trim()))
+      })()
     })
 
-    // stream-json: the first line carrying session_id names the transcript (<session_id>.jsonl).
-    if (proc.stdout) {
-      const rl = createInterface({ input: proc.stdout })
-      let sessionSeen = false
-      rl.on('line', (line) => {
-        if (sessionSeen || !line.includes('session_id')) return
-        const sid = sessionIdOf(line)
-        if (!sid) return
-        sessionSeen = true
-        settle(sid)
-      })
-    }
+    // The session id is the first stream-json line carrying session_id (the transcript is <session_id>.jsonl).
+    // Poll the log for it. After the timeout the pending id is returned, and polling continues so the
+    // real id still becomes an alias in the registry.
+    void (async () => {
+      const lateUntil = deadline + CLAUDE_LATE_LINK_MS
+      let timedOut = false
+      while (!entry.exited && Date.now() < lateUntil) {
+        const sid = await sessionIdFromLog(logFile)
+        if (sid) {
+          settle(sid)
+          return
+        }
+        if (!timedOut && Date.now() >= deadline) {
+          timedOut = true
+          settle(pendingId)
+        }
+        await sleep(timedOut ? CLAUDE_LATE_POLL_MS : CLAUDE_LOG_POLL_MS)
+      }
+    })()
   })
 }
 
@@ -173,20 +199,35 @@ function sessionIdOf(line: string): string | undefined {
   }
 }
 
+/** The session id named in the head of a Claude Code run log, if it has been written yet. */
+async function sessionIdFromLog(file: string): Promise<string | undefined> {
+  for (const line of (await readHead(file, LOG_HEAD_BYTES)).split('\n')) {
+    if (!line.includes('session_id')) continue
+    const sid = sessionIdOf(line)
+    if (sid) return sid
+  }
+  return undefined
+}
+
 // ---- Codex ---------------------------------------------------------------------------
 
-function startCodex(cwd: string, prompt: string, shortid: string, opts: DispatchOptions): Promise<DispatchResult> {
+function startCodex(cwd: string, prompt: string, shortid: string, logFile: string, opts: DispatchOptions): Promise<DispatchResult> {
   const sinceMs = Date.now()
-  const proc = spawnTool('codex', ['exec', '--full-auto', prompt], cwd)
+  const out = openLog(logFile)
+  let proc: ChildProcess
+  try {
+    proc = spawnTool('codex', ['exec', '--full-auto', prompt], cwd, out)
+  } finally {
+    closeSync(out)
+  }
+  proc.unref()
   const agentId = `codex-${shortid}`
   const entry: Running = { keys: new Set([agentId]), proc, exited: false, kind: 'codex', cwd }
-  proc.stdout?.resume()
-  proc.stderr?.resume()
 
   return new Promise<DispatchResult>((resolve, reject) => {
     proc.once('spawn', () => {
       registry.set(agentId, entry)
-      logStarted(entry, agentId)
+      logStarted(entry, agentId, logFile)
       void linkCodexRollout(entry, sinceMs, opts)
       resolve({ agentId, proc })
     })
@@ -217,27 +258,61 @@ async function linkCodexRollout(entry: Running, sinceMs: number, opts: DispatchO
       }
       return
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, pollMs))
+    await sleep(pollMs)
   }
 }
 
 // ---- process helpers -------------------------------------------------------------------
 
-function logStarted(entry: Running, id: string): void {
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
+}
+
+function logFileFor(opts: DispatchOptions, shortid: string): string {
+  return path.join(opts.logDir ?? path.join(os.tmpdir(), 'skyline-logs'), `dispatch-${shortid}.log`)
+}
+
+/** Opens (creating and appending) a run's log. The caller hands the descriptor to the child, then closes it. */
+function openLog(file: string): number {
+  mkdirSync(path.dirname(file), { recursive: true })
+  return openSync(file, 'a')
+}
+
+async function readHead(file: string, bytes: number): Promise<string> {
+  let fh: Awaited<ReturnType<typeof fsp.open>> | undefined
+  try {
+    fh = await fsp.open(file, 'r')
+    const buf = Buffer.alloc(bytes)
+    const { bytesRead } = await fh.read(buf, 0, bytes, 0)
+    return buf.subarray(0, bytesRead).toString('utf8')
+  } catch {
+    return ''
+  } finally {
+    await fh?.close().catch(() => undefined)
+  }
+}
+
+/** The start of a run's log, trimmed, for error messages. */
+async function logHead(file: string): Promise<string> {
+  return (await readHead(file, ERROR_LOG_CHARS)).trim()
+}
+
+function logStarted(entry: Running, id: string, logFile: string): void {
   if (entry.proc.pid === undefined) return
-  console.info(`[skyline] ${entry.kind} agent ${id} started, pid ${entry.proc.pid}, cwd ${entry.cwd}`)
+  console.info(`[skyline] ${entry.kind} agent ${id} started, pid ${entry.proc.pid}, cwd ${entry.cwd}, log ${logFile}`)
 }
 
 /**
  * Posix: spawn directly with its own process group (detached) so the whole tree can be signalled.
  * Windows: the CLIs are .cmd shims, which need the shell, so the command line is quoted by hand.
+ * Output goes to the log descriptor `out` (stdout and stderr), never to a pipe.
  */
-function spawnTool(bin: string, args: string[], cwd: string): ChildProcess {
+function spawnTool(bin: string, args: string[], cwd: string, out: number): ChildProcess {
   if (process.platform === 'win32') {
     const commandLine = [bin, ...args].map(quoteForCmd).join(' ')
-    return spawn(commandLine, { cwd, shell: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    return spawn(commandLine, { cwd, shell: true, windowsHide: true, stdio: ['ignore', out, out] })
   }
-  return spawn(bin, args, { cwd, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  return spawn(bin, args, { cwd, detached: true, windowsHide: true, stdio: ['ignore', out, out] })
 }
 
 /**
@@ -323,16 +398,4 @@ async function findOnPath(bin: string): Promise<boolean> {
 
 function isMissing(err: Error): boolean {
   return (err as NodeJS.ErrnoException).code === 'ENOENT'
-}
-
-function tailBuffer(max: number): { push(s: string): void; text(): string } {
-  let buf = ''
-  return {
-    push(s: string) {
-      buf = (buf + s).slice(-max)
-    },
-    text() {
-      return buf.trim()
-    }
-  }
 }

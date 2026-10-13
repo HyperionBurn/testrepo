@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 import type { ChildProcess } from 'node:child_process'
@@ -16,6 +16,7 @@ let tmp: string
 let bin: string
 let root: string
 let codexHome: string
+let logDir: string
 let savedPath: string | undefined
 let savedFakeHome: string | undefined
 
@@ -59,6 +60,7 @@ posix('dispatched agents answer to the id dispatch returned and to the real sess
     bin = path.join(tmp, 'bin')
     root = path.join(tmp, 'repo')
     codexHome = path.join(tmp, 'codex')
+    logDir = path.join(tmp, 'logs')
     mkdirSync(bin)
     mkdirSync(root)
     process.env.PATH = `${bin}${path.delimiter}${savedPath ?? ''}`
@@ -74,7 +76,7 @@ posix('dispatched agents answer to the id dispatch returned and to the real sess
 
   it('stops a Claude Code run by its real session id once the stream reports it', async () => {
     fakeCli('claude', `echo '{"type":"system","session_id":"${SESSION}"}'\nsleep 30`)
-    const r = await dispatchAgent(root, { kind: 'claude-code', prompt: 'hi', worktree: false })
+    const r = await dispatchAgent(root, { kind: 'claude-code', prompt: 'hi', worktree: false }, { logDir })
     expect(r.agentId).toBe(SESSION)
     expect(runningDispatched().find((a) => a.ids.includes(SESSION))?.pid).toBe(r.proc.pid)
 
@@ -85,7 +87,7 @@ posix('dispatched agents answer to the id dispatch returned and to the real sess
 
   it('stops a Claude Code run by the pending id returned after the timeout, once the real id is known', async () => {
     fakeCli('claude', `sleep 0.4\necho '{"type":"system","session_id":"${SESSION}"}'\nsleep 30`)
-    const r = await dispatchAgent(root, { kind: 'claude-code', prompt: 'hi', worktree: false }, { claudeIdTimeoutMs: 100 })
+    const r = await dispatchAgent(root, { kind: 'claude-code', prompt: 'hi', worktree: false }, { logDir, claudeIdTimeoutMs: 100 })
     expect(r.agentId).toMatch(/^pending-/)
 
     await eventually(() => runningDispatched().some((a) => a.ids.includes(SESSION)))
@@ -95,10 +97,38 @@ posix('dispatched agents answer to the id dispatch returned and to the real sess
 
   it('stops a Claude Code run by the real session id even when the pending id was returned first', async () => {
     fakeCli('claude', `sleep 0.4\necho '{"type":"system","session_id":"${SESSION}"}'\nsleep 30`)
-    const r = await dispatchAgent(root, { kind: 'claude-code', prompt: 'hi', worktree: false }, { claudeIdTimeoutMs: 100 })
+    const r = await dispatchAgent(root, { kind: 'claude-code', prompt: 'hi', worktree: false }, { logDir, claudeIdTimeoutMs: 100 })
     await eventually(() => runningDispatched().some((a) => a.ids.includes(SESSION)))
     await stopDispatched(SESSION)
     expect(await exited(r.proc)).toBe(true)
+  })
+
+  it('keeps output in a log file, not a pipe, so the run carries on without Skyline reading it', async () => {
+    fakeCli('claude', `echo '{"type":"system","session_id":"${SESSION}"}'\nsleep 0.3\necho after-quit\nsleep 30`)
+    const r = await dispatchAgent(root, { kind: 'claude-code', prompt: 'hi', worktree: false }, { logDir })
+    expect(r.proc.stdout).toBeNull()
+    expect(r.proc.stderr).toBeNull()
+
+    const [logName] = readdirSync(logDir)
+    expect(logName).toMatch(/^dispatch-[0-9a-f]{8}\.log$/)
+    await eventually(() => readFileSync(path.join(logDir, logName), 'utf8').includes('after-quit'))
+    expect(r.proc.exitCode).toBeNull()
+
+    await stopDispatched(SESSION)
+    expect(await exited(r.proc)).toBe(true)
+  })
+
+  it('returns the session id of a run that prints it and exits at once', async () => {
+    fakeCli('claude', `echo '{"type":"system","session_id":"fast-1"}'`)
+    const r = await dispatchAgent(root, { kind: 'claude-code', prompt: 'hi', worktree: false }, { logDir })
+    expect(r.agentId).toBe('fast-1')
+  })
+
+  it('fails with the start of the log when Claude Code exits before it reports a session', async () => {
+    fakeCli('claude', `echo 'boom from the cli'\nexit 3`)
+    await expect(dispatchAgent(root, { kind: 'claude-code', prompt: 'hi', worktree: false }, { logDir })).rejects.toThrow(
+      /exited before it started \(code 3\)\. boom from the cli/
+    )
   })
 
   it('links a Codex run to its own session id from the rollout file it writes', async () => {
@@ -112,7 +142,7 @@ posix('dispatched agents answer to the id dispatch returned and to the real sess
         'sleep 30'
       ].join('\n')
     )
-    const r = await dispatchAgent(root, { kind: 'codex', prompt: 'hi', worktree: false }, { codexHome, codexPollMs: 50 })
+    const r = await dispatchAgent(root, { kind: 'codex', prompt: 'hi', worktree: false }, { codexHome, codexPollMs: 50, logDir })
     expect(r.agentId).toMatch(/^codex-/)
 
     await eventually(() => runningDispatched().some((a) => a.ids.includes(CODEX_UUID)))
