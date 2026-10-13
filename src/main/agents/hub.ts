@@ -16,6 +16,7 @@ import {
   isWithinRepo,
   relativeWithin,
   snippet,
+  stripSkylineWorktree,
   type MessageUsage,
   type ParseCtx,
   type ParsedLine,
@@ -478,6 +479,8 @@ export class AgentHub extends EventEmitter {
   }
 
   private applyEvent(st: AgentState, ev: AgentEvent, emit: boolean, fromAgent: boolean): void {
+    // Edits made in a dispatched worktree land on the main checkout's building.
+    if (ev.file) ev.file = stripSkylineWorktree(ev.file)
     if (ev.type === 'create' && ev.file && this.knownFiles.has(ev.file)) ev.type = 'edit'
 
     if (ev.file) {
@@ -642,7 +645,8 @@ export class AgentHub extends EventEmitter {
   private relOf(p: string): string | undefined {
     if (typeof p !== 'string' || p.trim() === '') return undefined
     // Absolute paths are made relative; relative ones are taken as repo-relative.
-    return relativeWithin(p, this.repoRoot) || undefined
+    const rel = relativeWithin(p, this.repoRoot)
+    return rel ? stripSkylineWorktree(rel) : undefined
   }
 
   private statusOf(st: AgentState, now: number): AgentStatus {

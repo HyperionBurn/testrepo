@@ -15,6 +15,7 @@ export const IPC = {
   digest: 'skyline:digest',
   explain: 'skyline:explain',
   getSettings: 'skyline:getSettings',
+  listSessions: 'skyline:listSessions',
   winMin: 'skyline:window:minimize',
   winMax: 'skyline:window:maximize',
   winClose: 'skyline:window:close',
@@ -24,7 +25,7 @@ export const IPC = {
 export type IpcInvokeChannel = (typeof IPC)[keyof typeof IPC]
 
 /** Main -> renderer event channels accepted by SkylineAPI.on. */
-export const EVENT_CHANNELS = ['agents', 'event', 'repo', 'llm'] as const
+export const EVENT_CHANNELS = ['agents', 'event', 'repo', 'llm', 'digest', 'history'] as const
 export type EventChannel = (typeof EVENT_CHANNELS)[number]
 
 export const ON_PREFIX = 'skyline:on:'

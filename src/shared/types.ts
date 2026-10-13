@@ -85,7 +85,21 @@ export interface SkylineAPI {
   on(channel: 'event', cb: (e: AgentEvent) => void): () => void;
   on(channel: 'repo', cb: (s: RepoSnapshot) => void): () => void;   // after fs changes (debounced 500ms)
   on(channel: 'llm', cb: (s: LlmStatus) => void): () => void;
+  on(channel: 'digest', cb: (d: Digest) => void): () => void;          // a digest that finished after digest() had already answered with the heuristic
+  on(channel: 'history', cb: (c: GitCommit[]) => void): () => void;    // after HEAD, a ref or the reflog moved (debounced 1s)
   window: { minimize(): void; maximize(): void; close(): void };
   platform: string;
   autoOpen(): Promise<string | null>;                         // repo path from SKYLINE_OPEN env, if set
+  listSessions(): Promise<RecentSession[]>;                   // agent sessions from the last 7 days, all repos, newest first, max 200
+}
+
+/** A recent agent session found on this machine, for the Welcome screen. */
+export interface RecentSession {
+  kind: AgentKind;
+  /** Session working directory. A Skyline worktree (.skyline/worktrees/<id>) is reported as its main checkout. */
+  cwd: string;
+  /** Modification time of the session file, ms. */
+  lastActiveAt: number;
+  /** Claude Code session id, or Codex session id. */
+  id: string;
 }

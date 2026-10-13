@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { AgentEvent, AgentInfo, Digest, LlmStatus } from '../../shared/types'
 import type { Llama, LlamaContext, LlamaContextSequence, LlamaModel, ModelDownloader } from 'node-llama-cpp'
-import { heuristicDigest, heuristicExplain } from './heuristic'
+import { digestTotalsLine, heuristicDigest, heuristicExplain } from './heuristic'
 import { buildDigestMessages, buildExplainMessages } from './prompts'
 import { errorMessage } from './text'
 
@@ -23,6 +23,10 @@ const REPEAT_PENALTY = { penalty: 1.15, frequencyPenalty: 0.2, presencePenalty: 
 // A full-budget prompt (about 2400 tokens) plus 350 output tokens takes roughly 2 minutes on a
 // 4-core CPU, so the cap has to leave room for that.
 const GENERATION_TIMEOUT_MS = 300_000
+/** digest() answers with the heuristic when the model has not finished within this long. */
+export const DIGEST_WAIT_MS = 20_000
+/** Model label on a heuristic digest returned while the model is still working. */
+export const STILL_THINKING_MODEL = 'heuristic (LLM still thinking)'
 const PROGRESS_EMIT_MIN_DELTA = 0.005
 const PROGRESS_EMIT_MIN_INTERVAL_MS = 250
 
@@ -31,6 +35,8 @@ export interface LocalLlmOptions {
   modelsDir: string
   /** node-llama-cpp model URI. Defaults to DEFAULT_MODEL_URI. */
   modelUri?: string
+  /** How long digest() waits for the model before answering with the heuristic. Default DIGEST_WAIT_MS. */
+  digestWaitMs?: number
 }
 
 /** Extra event, beyond the contract: one per completed generation, for timing and diagnostics. */
@@ -60,6 +66,7 @@ export function modelFileNameFor(modelUri: string): string {
 export class LocalLlm extends EventEmitter {
   private readonly modelsDir: string
   private readonly modelUri: string
+  private readonly digestWaitMs: number
   /** Where the model file is or will be. */
   private modelPath: string
 
@@ -79,6 +86,7 @@ export class LocalLlm extends EventEmitter {
     super()
     this.modelsDir = opts.modelsDir
     this.modelUri = opts.modelUri?.trim() || DEFAULT_MODEL_URI
+    this.digestWaitMs = opts.digestWaitMs ?? DIGEST_WAIT_MS
     this.modelPath = join(this.modelsDir, modelFileNameFor(this.modelUri))
     this.current = this.diskStatus()
   }
@@ -114,26 +122,48 @@ export class LocalLlm extends EventEmitter {
   }
 
   /**
-   * Summary of agent activity. Uses the model when it is on disk and usable, otherwise the
-   * heuristic digest. Never throws and never waits for a download.
+   * Summary of agent activity: an exact totals line (computed, never generated) followed by the
+   * model's bullets. Uses the model when it is on disk and usable, otherwise the heuristic digest.
+   * If the model has not answered within digestWaitMs, returns the heuristic digest at once
+   * (model 'heuristic (LLM still thinking)') and emits 'digest' with the model's digest when it is
+   * ready. Never throws and never waits for a download.
    */
   async digest(events: AgentEvent[], agents: AgentInfo[], repoName: string): Promise<Digest> {
     const now = Date.now()
-    const fallback = (): Digest => ({ generatedAt: now, text: heuristicDigest(events, agents, now), model: 'heuristic' })
+    const fallback = (model = 'heuristic'): Digest => ({ generatedAt: now, text: heuristicDigest(events, agents, now), model })
     if (this.disposed || this.downloading || events.length === 0 || !this.modelOnDisk()) return fallback()
 
-    return this.enqueue(async (): Promise<Digest> => {
+    const work = this.enqueue(async (): Promise<Digest> => {
       if (this.disposed) return fallback()
       try {
         const msgs = buildDigestMessages({ events, agents, repoName, now })
-        const text = await this.generate(msgs.system, msgs.user, DIGEST_MAX_TOKENS)
-        if (!text) return fallback()
-        return { generatedAt: Date.now(), text, model: this.modelUri }
+        const narrative = await this.generate(msgs.system, msgs.user, DIGEST_MAX_TOKENS)
+        if (!narrative) return fallback()
+        const text = `${digestTotalsLine(events, agents, now)}\n\n${narrative}`
+        return { generatedAt: now, text, model: this.modelUri }
       } catch (err) {
         this.emit('generation-error', errorMessage(err))
         return fallback()
       }
     })
+
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), this.digestWaitMs)
+    })
+    const first = await Promise.race([work, deadline])
+    clearTimeout(timer)
+    if (first) return first
+
+    // The model is still busy (loading or generating). The caller gets the heuristic now; the model's
+    // digest follows as a 'digest' event. Errors inside work are already turned into a fallback.
+    void work.then(
+      (late) => {
+        if (!this.disposed) this.emit('digest', late)
+      },
+      () => undefined
+    )
+    return fallback(STILL_THINKING_MODEL)
   }
 
   /** Plain-English explanation of a file (two paragraphs), or a heuristic description. */

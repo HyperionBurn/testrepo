@@ -187,6 +187,29 @@ export function isWithinRepo(p: string, repoRoot: string): boolean {
   return relativeWithin(p, repoRoot) !== null
 }
 
+/** Skyline runs isolated agents in git worktrees under `<repo>/.skyline/worktrees/<id>/`. */
+const WORKTREE_REL_RE = /^\.skyline\/worktrees\/[^/]+\/(?=.)/
+
+/**
+ * Maps a repo-relative, forward-slash path inside one of those worktrees back to the main checkout:
+ * `.skyline/worktrees/<id>/src/a.ts` becomes `src/a.ts`. Any other path is returned unchanged.
+ */
+export function stripSkylineWorktree(rel: string): string {
+  const m = WORKTREE_REL_RE.exec(rel)
+  return m ? rel.slice(m[0].length) : rel
+}
+
+const WORKTREE_ABS_RE = /^(.*?)[\\/]\.skyline[\\/]worktrees[\\/][^\\/]+(?:[\\/].*)?$/
+
+/**
+ * For a path inside a Skyline worktree, the main checkout it belongs to (the text before the first
+ * `/.skyline/worktrees/`), keeping the original separators. Other paths are returned unchanged.
+ */
+export function mainCheckoutOf(p: string): string {
+  const m = WORKTREE_ABS_RE.exec(p)
+  return m && m[1] ? m[1] : p
+}
+
 /** Maps the last event type of a line to a status hint. */
 export function statusFromEventType(type: AgentEvent['type'] | undefined): AgentStatus | undefined {
   switch (type) {

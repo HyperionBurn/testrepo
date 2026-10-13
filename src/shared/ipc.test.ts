@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { eventChannel, IPC } from './ipc'
+import { EVENT_CHANNELS, eventChannel, IPC } from './ipc'
 
 describe('ipc channels', () => {
   it('names invoke channels with the skyline prefix', () => {
@@ -10,5 +10,15 @@ describe('ipc channels', () => {
 
   it('builds main-to-renderer event channels', () => {
     expect(eventChannel('agents')).toBe('skyline:on:agents')
+  })
+
+  it('lists the digest and history event channels and builds their names', () => {
+    expect(EVENT_CHANNELS).toEqual(expect.arrayContaining(['digest', 'history']))
+    expect(eventChannel('digest')).toBe('skyline:on:digest')
+    expect(eventChannel('history')).toBe('skyline:on:history')
+  })
+
+  it('has an invoke channel for listSessions', () => {
+    expect(IPC.listSessions).toBe('skyline:listSessions')
   })
 })

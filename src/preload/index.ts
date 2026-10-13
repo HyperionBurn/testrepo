@@ -7,6 +7,7 @@ import type {
   DispatchRequest,
   GitCommit,
   LlmStatus,
+  RecentSession,
   RepoSnapshot,
   Settings,
   SkylineAPI
@@ -50,7 +51,8 @@ const api: SkylineAPI = {
     close: () => send(IPC.winClose)
   },
   platform: process.platform,
-  autoOpen: () => call<string | null>(IPC.autoOpen)
+  autoOpen: () => call<string | null>(IPC.autoOpen),
+  listSessions: () => call<RecentSession[]>(IPC.listSessions)
 }
 
 contextBridge.exposeInMainWorld('skyline', api)

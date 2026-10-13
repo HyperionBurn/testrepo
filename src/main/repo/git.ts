@@ -1,6 +1,7 @@
 // Git access through the `git` CLI. Every call degrades to null/[] when git is missing or the
 // folder is not a repository, so callers can fall back to a directory walk.
 import { execFile } from 'node:child_process'
+import * as path from 'node:path'
 import type { GitCommit } from '../../shared/types'
 
 export const HISTORY_LIMIT = 1500
@@ -22,6 +23,12 @@ export function runGit(cwd: string, args: string[]): Promise<string | null> {
 
 export async function isGitRepo(root: string): Promise<boolean> {
   return (await runGit(root, ['rev-parse', '--is-inside-work-tree']))?.trim() === 'true'
+}
+
+/** Absolute path of the git dir: `.git`, or the target of a worktree's `.git` file. Undefined outside a repo. */
+export async function gitDirOf(root: string): Promise<string | undefined> {
+  const out = (await runGit(root, ['rev-parse', '--git-dir']))?.trim()
+  return out ? path.resolve(root, out) : undefined
 }
 
 /** Current branch name, or undefined (detached HEAD prints 'HEAD'; unborn branches fall back to symbolic-ref). */

@@ -9,9 +9,11 @@ import type {
   DispatchRequest,
   GitCommit,
   LlmStatus,
+  RecentSession,
   RepoSnapshot
 } from '@shared/types'
-import { dispatchAgent, stopDispatched } from './agents/dispatch'
+import { dispatchAgent, runningDispatched, stopDispatched } from './agents/dispatch'
+import { listRecentSessions } from './agents/recent'
 import { RepoSession } from './session'
 import { addRecent, getSettings, modelsDir } from './store'
 import { readRepoText } from './repo/read'
@@ -76,6 +78,7 @@ function attach(s: RepoSession): void {
   s.on('repo', (snap: RepoSnapshot) => send('repo', snap))
   s.on('agents', (a: AgentInfo[]) => send('agents', a))
   s.on('event', (e: AgentEvent) => sendEvent(e))
+  s.on('history', (c: GitCommit[]) => send('history', c))
 }
 
 // ---- session lifecycle ----------------------------------------------------------------
@@ -103,6 +106,8 @@ async function getLlm(): Promise<LocalLlm> {
       .then((mod) => {
         const instance = new mod.LocalLlm({ modelsDir: modelsDir() })
         instance.on('status', (s: LlmStatus) => send('llm', s))
+        // A digest that finished after digest() had already answered with the heuristic.
+        instance.on('digest', (d: Digest) => send('digest', d))
         llm = instance
         return instance
       })
@@ -233,11 +238,22 @@ export function registerIpc(win: BrowserWindow): void {
 
   ipcMain.handle(IPC.getSettings, () => getSettings())
 
+  ipcMain.handle(IPC.listSessions, async (): Promise<RecentSession[]> => {
+    const settings = getSettings()
+    return listRecentSessions({ claudeHome: settings.claudeDir, codexHome: settings.codexDir })
+  })
+
   ipcMain.handle(IPC.autoOpen, (): string | null => process.env.SKYLINE_OPEN || null)
 }
 
-/** Stops the open session and the LLM. Called on app quit. */
+/**
+ * Stops the open session and the LLM. Called on app quit. Dispatched agents are user work and keep
+ * running; their pids are logged so they can be found afterwards.
+ */
 export function disposeIpc(): void {
+  for (const r of runningDispatched()) {
+    console.info(`[skyline] leaving ${r.kind} agent ${r.id} running, pid ${r.pid ?? 'unknown'}, cwd ${r.cwd}`)
+  }
   disposeSession()
   const instance = llm
   llm = undefined

@@ -1,10 +1,12 @@
 // RepoSession: everything that lives while one repository is open. Owns the snapshot, the file
-// watcher, the agent hub and cached git history. Emits 'repo' (debounced), 'agents' and 'event'.
+// watcher, the git-dir watcher, the agent hub and cached git history. Emits 'repo' (debounced),
+// 'history' (after a git refresh), 'agents' and 'event'.
 import { EventEmitter } from 'node:events'
 import * as path from 'node:path'
 import type { AgentEvent, AgentInfo, FileNode, GitCommit, RepoSnapshot } from '../shared/types'
 import { AgentHub } from './agents/hub'
-import { churnCounts, getHistory, HISTORY_LIMIT, isGitRepo } from './repo/git'
+import { churnCounts, currentBranch, getHistory, gitDirOf, HISTORY_LIMIT, isGitRepo } from './repo/git'
+import { GitWatcher } from './repo/git-watch'
 import { scanFile, scanRepo } from './repo/scan'
 import { RepoWatcher, type FsChange } from './repo/watch'
 
@@ -27,6 +29,7 @@ export class RepoSession extends EventEmitter {
   private history: GitCommit[] = []
   private isGit = false
   private readonly watcher: RepoWatcher
+  private gitWatcher?: GitWatcher
   private readonly hub: AgentHub
   private queue: Promise<void> = Promise.resolve()
   private emitTimer?: ReturnType<typeof setTimeout>
@@ -56,6 +59,7 @@ export class RepoSession extends EventEmitter {
     this.watcher.on('change', (c: FsChange) => this.onChange(c))
     this.watcher.start()
     await this.enqueue(() => this.loadSnapshot())
+    await this.startGitWatch()
 
     this.hub.on('agents', (a: AgentInfo[]) => {
       if (!this.disposed) this.emit('agents', a)
@@ -64,6 +68,19 @@ export class RepoSession extends EventEmitter {
       if (!this.disposed) this.emit('event', e)
     })
     this.hub.start().catch(() => undefined)
+  }
+
+  /** Watches HEAD, refs and the reflog; a change re-reads history after a short quiet period. */
+  private async startGitWatch(): Promise<void> {
+    if (!this.isGit || this.disposed) return
+    const gitDir = await gitDirOf(this.root)
+    if (!gitDir || this.disposed) return
+    const gw = new GitWatcher(gitDir)
+    gw.on('change', () => {
+      if (!this.disposed) void this.enqueue(() => this.refreshGit()).catch(() => undefined)
+    })
+    this.gitWatcher = gw
+    await gw.start()
   }
 
   private async loadSnapshot(): Promise<void> {
@@ -108,6 +125,9 @@ export class RepoSession extends EventEmitter {
     this.emitTimer = undefined
     this.watcher.removeAllListeners()
     this.watcher.stop().catch(() => undefined)
+    this.gitWatcher?.removeAllListeners()
+    this.gitWatcher?.stop().catch(() => undefined)
+    this.gitWatcher = undefined
     this.hub.removeAllListeners()
     this.hub.stop()
     this.removeAllListeners()
@@ -146,6 +166,24 @@ export class RepoSession extends EventEmitter {
       if (node) this.files.set(rel, node)
       else if (!this.files.delete(rel)) return
     }
+    this.scheduleRepoEmit()
+  }
+
+  /**
+   * Re-reads history after HEAD, a branch or the reflog moved: fresh churn counts on every file,
+   * then 'history' and 'repo'. An empty read keeps the cache, so a failed git call cannot wipe it.
+   */
+  private async refreshGit(): Promise<void> {
+    if (this.disposed) return
+    const history = await getHistory(this.root, Math.max(HISTORY_LIMIT, this.history.length))
+    if (this.disposed || history.length === 0) return
+    this.history = history
+    this.churn.clear()
+    for (const [p, n] of churnCounts(history)) this.churn.set(p, n)
+    for (const f of this.files.values()) f.commits = this.churn.get(f.path) ?? 0
+    this.branch = (await currentBranch(this.root)) ?? this.branch
+    if (this.disposed) return
+    this.emit('history', history.slice())
     this.scheduleRepoEmit()
   }
 

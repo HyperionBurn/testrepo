@@ -30,22 +30,10 @@ export function heuristicDigest(
 
   const s = summarizeActivity(events, agents, now)
   const groups = [...s.agentGroups].sort(byActivityDesc)
-
-  let changes = 0
-  let commands = 0
-  let reads = 0
-  let cost = 0
-  const files = new Set<string>()
-  for (const g of groups) {
-    changes += g.changes
-    commands += g.commands
-    reads += g.reads
-    cost += g.agent?.costUsd ?? 0
-    for (const path of g.files.keys()) files.add(path)
-  }
+  const totals = totalsOf(groups)
 
   const lines: string[] = []
-  lines.push(`While you were away (${formatDuration(now - s.start)}), ${leadSentence(groups, s, { changes, commands, reads, files: files.size, cost })}.`)
+  lines.push(`While you were away (${formatDuration(now - s.start)}), ${leadSentence(groups, s, totals)}.`)
   lines.push('')
 
   for (const g of groups.slice(0, MAX_AGENT_BULLETS)) lines.push(agentBullet(g))
@@ -69,6 +57,40 @@ interface Totals {
   reads: number
   files: number
   cost: number
+}
+
+/** Totals over attributed agent groups. Cost is the sum of those agents' session costs. */
+function totalsOf(groups: readonly ActivityGroup[]): Totals {
+  const t: Totals = { changes: 0, commands: 0, reads: 0, files: 0, cost: 0 }
+  const files = new Set<string>()
+  for (const g of groups) {
+    t.changes += g.changes
+    t.commands += g.commands
+    t.reads += g.reads
+    t.cost += g.agent?.costUsd ?? 0
+    for (const path of g.files.keys()) files.add(path)
+  }
+  t.files = files.size
+  return t
+}
+
+/**
+ * The exact totals line that leads every LLM digest, for example
+ * `**2h 14m · 3 agents · 47 edits · 18 files · 12 commands · $1.84**`. Computed here, never by the
+ * model. Counts cover attributed agents only, the same numbers the heuristic digest states.
+ */
+export function digestTotalsLine(events: readonly AgentEvent[], agents: readonly AgentInfo[], now: number): string {
+  const s = summarizeActivity(events, agents, now)
+  const t = totalsOf(s.agentGroups)
+  const parts = [
+    formatDuration(now - s.start),
+    plural(s.agentGroups.length, 'agent'),
+    plural(t.changes, 'edit'),
+    plural(t.files, 'file'),
+    plural(t.commands, 'command'),
+    formatUsd(t.cost)
+  ]
+  return `**${parts.join(' · ')}**`
 }
 
 function leadSentence(groups: ActivityGroup[], s: ActivitySummary, t: Totals): string {
