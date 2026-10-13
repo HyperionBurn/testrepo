@@ -13,7 +13,7 @@ const TEST_RUN_RE =
 
 const COMMAND_MAX = 80
 const MESSAGE_MAX = 200
-const MESSAGE_KEEP = 3
+const MESSAGE_KEEP = 2
 
 export interface FileTally {
   path: string;

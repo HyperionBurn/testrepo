@@ -1,19 +1,23 @@
 // Prompt construction for the local model. Everything here is pure and budgeted: the full
-// system + user text is kept under DIGEST_TOKEN_BUDGET using a 4-characters-per-token estimate.
+// system + user text is kept under DIGEST_TOKEN_BUDGET using a 3-characters-per-token estimate,
+// which matches how real code and paths tokenize with the Qwen tokenizer (about 3.0 chars/token).
 import type { AgentEvent, AgentInfo } from '../../shared/types'
-import {
-  changedFilesByRecency,
-  commandsByRecency,
-  summarizeActivity,
-  type ActivityGroup
-} from './activity'
+import { changedFilesByRecency, commandsByRecency, summarizeActivity, type ActivityGroup } from './activity'
 import { clip, formatClock, formatDuration, plural, squash } from './text'
 
-export const CHARS_PER_TOKEN = 4
-export const DIGEST_TOKEN_BUDGET = 2500
+export const CHARS_PER_TOKEN = 3
+export const DIGEST_TOKEN_BUDGET = 2400
 export const EXPLAIN_CONTENT_CHARS = 6000
 
-const MAX_LINES_PER_LIST = 12
+/** Agents listed individually; the rest collapse into one summary line. */
+export const MAX_AGENT_SECTIONS = 8
+/** Changed files listed per agent (most edited first); the rest collapse into a count. */
+export const MAX_FILES_PER_AGENT = 6
+/** Distinct commands listed per agent (most run first). */
+export const MAX_COMMANDS_PER_AGENT = 4
+/** Assistant messages kept per agent, most recent last. */
+export const MAX_MESSAGES_PER_AGENT = 2
+
 const MESSAGE_CLIP = 200
 const PATH_CLIP = 140
 const COMMAND_CLIP = 100
@@ -38,7 +42,7 @@ export interface ChatMessages {
   user: string
 }
 
-/** Rough token count: ceil(chars / 4). Used only to size prompts, never for billing. */
+/** Rough token count: ceil(chars / 3). Used only to size prompts, never for billing. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN)
 }
@@ -83,10 +87,12 @@ interface Section {
 }
 
 /**
- * Turns the activity into a compact text of at most `budgetChars` characters. Agents are listed
- * most recent first and share the budget evenly; each agent gets a header, its last message,
- * changed files, commands and read/spawn counts. Lines that do not fit are replaced by a
- * "more omitted" marker.
+ * Turns the activity into a compact text of at most `budgetChars` characters. The most recent
+ * MAX_AGENT_SECTIONS agents get a section each (sharing the budget evenly); the unattributed
+ * changes get one more; any other agents collapse into a single summary line. Within a section,
+ * files are grouped by directory and capped, commands are deduplicated and capped, and only the
+ * last assistant messages are kept, each clipped. Lines that do not fit become a "more omitted"
+ * marker.
  */
 export function compactActivity(
   events: readonly AgentEvent[],
@@ -97,18 +103,29 @@ export function compactActivity(
   if (events.length === 0) return '(no agent activity recorded)'
   const s = summarizeActivity(events, agents, now)
   const groups = [...s.agentGroups].sort((a, b) => b.lastTs - a.lastTs || (a.name < b.name ? -1 : 1))
-  if (s.unattributed) groups.push(s.unattributed)
+  const shown = groups.slice(0, MAX_AGENT_SECTIONS)
+  const rest = groups.slice(MAX_AGENT_SECTIONS)
 
-  const sections = groups.map(sectionFor)
+  const sections = shown.map(sectionFor)
+  if (s.unattributed) sections.push(sectionFor(s.unattributed))
+
+  let restLine = ''
+  if (rest.length > 0) {
+    const changes = rest.reduce((n, g) => n + g.changes, 0)
+    const commands = rest.reduce((n, g) => n + g.commands, 0)
+    restLine = `… ${plural(rest.length, 'more agent')} not listed: ${plural(changes, 'change')}, ${plural(commands, 'command')} in total`
+  }
+
+  const reserve = restLine ? restLine.length + 1 : 0
+  let remaining = Math.max(0, budgetChars - reserve)
   const out: string[] = []
-  let remaining = budgetChars
-  let omittedAgents = 0
+  let omittedSections = 0
 
   for (let i = 0; i < sections.length; i++) {
     const lines = sections[i].lines
     const share = Math.floor(remaining / (sections.length - i))
     if (lines[0].length + 1 > share) {
-      omittedAgents++
+      omittedSections++
       continue
     }
     let used = 0
@@ -129,7 +146,8 @@ export function compactActivity(
     remaining -= used
   }
 
-  if (omittedAgents > 0) out.push(`… ${plural(omittedAgents, 'more agent')} omitted`)
+  if (omittedSections > 0) out.push(`… ${plural(omittedSections, 'more section')} omitted`)
+  if (restLine) out.push(restLine)
   return clip(escapeTag(out.join('\n'), 'activity'), budgetChars)
 }
 
@@ -142,27 +160,52 @@ function sectionFor(g: ActivityGroup): Section {
       `### ${g.name} (${a.kind}${model}, status ${a.status}, cost $${a.costUsd.toFixed(2)}): ` +
         `${plural(g.changes, 'change')}, ${plural(g.reads, 'read')}, ${plural(g.commands, 'command')}`
     )
-    const message = squash(a.lastMessage ?? '', MESSAGE_CLIP) || g.messages[g.messages.length - 1] || ''
-    if (message) lines.push(`- last message: "${clip(message, MESSAGE_CLIP)}"`)
   } else {
     lines.push(`### ${g.name}: ${plural(g.changes, 'change')} outside any agent`)
   }
 
-  const files = changedFilesByRecency(g)
-  for (const f of files.slice(0, MAX_LINES_PER_LIST)) {
-    lines.push(
-      `- changed \`${clip(f.path, PATH_CLIP)}\` ×${f.changes} (+${f.added} −${f.removed}), last ${formatClock(f.lastTs)}`
-    )
-  }
-  if (files.length > MAX_LINES_PER_LIST) lines.push(`- …${files.length - MAX_LINES_PER_LIST} more files changed`)
+  const messages = g.messages.slice(-MAX_MESSAGES_PER_AGENT)
+  if (messages.length === 0 && a?.lastMessage) messages.push(squash(a.lastMessage, MESSAGE_CLIP))
+  for (const m of messages) lines.push(`- said: "${clip(m, MESSAGE_CLIP)}"`)
 
-  const cmds = commandsByRecency(g)
-  for (const c of cmds.slice(0, MAX_LINES_PER_LIST)) {
-    lines.push(`- ran \`${clip(c.text, COMMAND_CLIP)}\` ×${c.count}, last ${formatClock(c.lastTs)}`)
+  // Files: the most edited ones, grouped by directory; the rest become one count line.
+  const ranked = [...changedFilesByRecency(g)].sort((x, y) => y.changes - x.changes)
+  const top = ranked.slice(0, MAX_FILES_PER_AGENT)
+  const byDir = new Map<string, string[]>()
+  for (const f of top) {
+    const dir = dirName(f.path)
+    const items = byDir.get(dir) ?? []
+    items.push(`${clip(baseName(f.path), PATH_CLIP)} ×${f.changes}`)
+    byDir.set(dir, items)
   }
-  if (cmds.length > MAX_LINES_PER_LIST) lines.push(`- …${cmds.length - MAX_LINES_PER_LIST} more distinct commands`)
+  for (const [dir, items] of byDir) {
+    lines.push(`- changed in \`${dir || '.'}/\`: ${items.join(', ')}`)
+  }
+  const restFiles = ranked.slice(MAX_FILES_PER_AGENT)
+  if (restFiles.length > 0) {
+    const dirs = new Set(restFiles.map((f) => dirName(f.path)))
+    lines.push(`- +${restFiles.length} more files in ${plural(dirs.size, 'dir', 'dirs')}`)
+  }
+
+  const cmds = commandsByRecency(g).sort((x, y) => y.count - x.count)
+  for (const c of cmds.slice(0, MAX_COMMANDS_PER_AGENT)) {
+    lines.push(`- ran \`${clip(c.text, COMMAND_CLIP)}\` ×${c.count}`)
+  }
+  if (cmds.length > MAX_COMMANDS_PER_AGENT) {
+    lines.push(`- +${cmds.length - MAX_COMMANDS_PER_AGENT} more distinct commands`)
+  }
 
   if (g.reads > 0) lines.push(`- read ${plural(g.readFiles.size || g.reads, 'file')}`)
   if (g.spawns > 0) lines.push(`- spawned ${plural(g.spawns, 'subagent')}`)
   return { lines }
+}
+
+function dirName(p: string): string {
+  const i = p.lastIndexOf('/')
+  return i < 0 ? '' : p.slice(0, i)
+}
+
+function baseName(p: string): string {
+  const i = p.lastIndexOf('/')
+  return i < 0 ? p : p.slice(i + 1)
 }

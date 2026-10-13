@@ -15,10 +15,14 @@ export const DEFAULT_MODEL_URI =
   'hf:Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf'
 
 const CONTEXT_SIZE = 4096
-const DIGEST_MAX_TOKENS = 400
-const EXPLAIN_MAX_TOKENS = 400
+const DIGEST_MAX_TOKENS = 350
+const EXPLAIN_MAX_TOKENS = 350
 const TEMPERATURE = 0.3
-const GENERATION_TIMEOUT_MS = 120_000
+// Discourages the small model from looping on repeated list items.
+const REPEAT_PENALTY = { penalty: 1.15, frequencyPenalty: 0.2, presencePenalty: 0.1, lastTokens: 128 }
+// A full-budget prompt (about 2400 tokens) plus 350 output tokens takes roughly 2 minutes on a
+// 4-core CPU, so the cap has to leave room for that.
+const GENERATION_TIMEOUT_MS = 300_000
 const PROGRESS_EMIT_MIN_DELTA = 0.005
 const PROGRESS_EMIT_MIN_INTERVAL_MS = 250
 
@@ -125,7 +129,8 @@ export class LocalLlm extends EventEmitter {
         const text = await this.generate(msgs.system, msgs.user, DIGEST_MAX_TOKENS)
         if (!text) return fallback()
         return { generatedAt: Date.now(), text, model: this.modelUri }
-      } catch {
+      } catch (err) {
+        this.emit('generation-error', errorMessage(err))
         return fallback()
       }
     })
@@ -142,7 +147,8 @@ export class LocalLlm extends EventEmitter {
         const msgs = buildExplainMessages({ path, content, repoName })
         const text = await this.generate(msgs.system, msgs.user, EXPLAIN_MAX_TOKENS)
         return text || fallback()
-      } catch {
+      } catch (err) {
+        this.emit('generation-error', errorMessage(err))
         return fallback()
       }
     })
@@ -308,6 +314,7 @@ export class LocalLlm extends EventEmitter {
       const raw = await session.prompt(user, {
         maxTokens,
         temperature: TEMPERATURE,
+        repeatPenalty: REPEAT_PENALTY,
         signal: controller.signal
       })
       const text = raw.trim()

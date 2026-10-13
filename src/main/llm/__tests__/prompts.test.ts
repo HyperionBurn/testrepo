@@ -59,10 +59,79 @@ function bigLog(): { events: AgentEvent[]; agents: AgentInfo[] } {
 }
 
 describe('estimateTokens', () => {
-  it('uses 4 characters per token, rounding up', () => {
+  it('uses 3 characters per token, rounding up', () => {
     expect(estimateTokens('')).toBe(0)
-    expect(estimateTokens('abcd')).toBe(1)
-    expect(estimateTokens('abcde')).toBe(2)
+    expect(estimateTokens('abc')).toBe(1)
+    expect(estimateTokens('abcd')).toBe(2)
+  })
+})
+
+describe('compaction limits', () => {
+  function agentsAndEvents(nAgents: number, perAgent: (a: number) => AgentEvent[]) {
+    const agents: AgentInfo[] = []
+    const events: AgentEvent[] = []
+    for (let a = 0; a < nAgents; a++) {
+      agents.push(agent(a))
+      events.push(...perAgent(a))
+    }
+    return { agents, events }
+  }
+
+  it('lists at most 8 agents and summarises the rest in one line', () => {
+    const { agents, events } = agentsAndEvents(20, (a) => [
+      { id: `x${a}`, agentId: `agent-${a}`, type: 'edit', ts: T0 + a * 1000, file: `src/f${a}.ts` }
+    ])
+    const text = compactActivity(events, agents, T0 + 1e6, 20_000)
+    expect(text.match(/^### /gm)?.length).toBeLessThanOrEqual(8)
+    expect(text).toMatch(/… 12 more agents not listed: 12 changes, 0 commands in total/)
+  })
+
+  it('groups the top files by directory and collapses the rest into a count', () => {
+    const { agents, events } = agentsAndEvents(1, () => {
+      const out: AgentEvent[] = []
+      for (let i = 0; i < 20; i++) {
+        out.push({ id: `f${i}`, agentId: 'agent-0', type: 'edit', ts: T0 + i, file: `src/dir${i % 5}/file${i}.ts` })
+      }
+      return out
+    })
+    const text = compactActivity(events, agents, T0 + 1e6, 20_000)
+    expect(text.match(/- changed in `src\/dir\d\/`/g)?.length).toBeGreaterThan(0)
+    expect(text).toMatch(/- \+14 more files in \d+ dirs/)
+    // Only the top 6 files appear individually.
+    expect(text.match(/ ×1/g)?.length).toBe(6)
+  })
+
+  it('shows at most 4 commands and counts the remainder', () => {
+    const { agents, events } = agentsAndEvents(1, () =>
+      Array.from({ length: 10 }, (_, i) => ({
+        id: `c${i}`,
+        agentId: 'agent-0',
+        type: 'command' as const,
+        ts: T0 + i,
+        text: `npm run step-${i}`
+      }))
+    )
+    const text = compactActivity(events, agents, T0 + 1e6, 20_000)
+    expect(text.match(/- ran `npm run step-/g)?.length).toBe(4)
+    expect(text).toContain('- +6 more distinct commands')
+  })
+
+  it('keeps only the last 2 messages per agent, each clipped to 200 characters', () => {
+    const { agents, events } = agentsAndEvents(1, () =>
+      Array.from({ length: 5 }, (_, i) => ({
+        id: `m${i}`,
+        agentId: 'agent-0',
+        type: 'message' as const,
+        ts: T0 + i,
+        text: `message-${i} ` + 'x'.repeat(500)
+      }))
+    )
+    const text = compactActivity(events, agents, T0 + 1e6, 20_000)
+    const said = text.split('\n').filter((l) => l.startsWith('- said:'))
+    expect(said).toHaveLength(2)
+    expect(said[0]).toContain('message-3')
+    expect(said[1]).toContain('message-4')
+    for (const line of said) expect(line.length).toBeLessThanOrEqual('- said: ""'.length + 200)
   })
 })
 
@@ -91,7 +160,7 @@ describe('buildDigestMessages', () => {
       { id: '2', agentId: 'agent-0', type: 'command', ts: T0 + 1000, text: 'npm test' }
     ]
     const msgs = buildDigestMessages({ events, agents: [agent(0)], repoName: 'acme', now: T0 + 60_000 })
-    expect(msgs.user).toContain('changed `src/a.ts` ×1 (+3 −1)')
+    expect(msgs.user).toContain('- changed in `src/`: a.ts ×1')
     expect(msgs.user).toContain('ran `npm test` ×1')
     expect(msgs.user).not.toContain('omitted')
     expect(msgs.user).toContain('Window: last 1m')
