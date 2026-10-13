@@ -59,7 +59,11 @@ export interface AgentEvent {
 export interface GitCommit { hash: string; ts: number; author: string; subject: string;
   files: { path: string; added: number; removed: number }[]; }
 
-export interface Digest { generatedAt: number; text: string; model: string; }
+export interface Digest {
+  generatedAt: number; text: string; model: string;
+  /** Id of the digest() request this answers. Echoed on the immediate answer and on the late 'digest' event. */
+  requestId?: string;
+}
 
 export interface DispatchRequest { kind: 'claude-code' | 'codex'; prompt: string; worktree: boolean; }
 
@@ -91,6 +95,10 @@ export interface SkylineAPI {
   platform: string;
   autoOpen(): Promise<string | null>;                         // repo path from SKYLINE_OPEN env, if set
   listSessions(): Promise<RecentSession[]>;                   // agent sessions from the last 7 days, all repos, newest first, max 200
+  /** Writes a capture (PNG or WebM) after a save dialog (or into SKYLINE_CAPTURE_DIR when set). copy: also put a PNG on the clipboard. Resolves to the saved path, or null if the dialog was cancelled. */
+  saveCapture(data: Uint8Array, suggestedName: string, copy?: boolean): Promise<string | null>;
+  /** Test hook: SKYLINE_FLYOVER_SECONDS shortens the flyover. Undefined in normal runs. */
+  flyoverSeconds?: number;
 }
 
 /** A recent agent session found on this machine, for the Welcome screen. */

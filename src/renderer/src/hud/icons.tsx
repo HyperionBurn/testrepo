@@ -353,3 +353,25 @@ export function SkylineGlyph({ size = 22, animated = false }: { size?: number; a
     </svg>
   )
 }
+
+export const IconCamera = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.2l1.3-2h4l1.3 2h1.2A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z" />
+    <circle cx="12" cy="12.5" r="3.4" />
+  </Base>
+)
+
+export const IconVideo = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3" y="6.5" width="13" height="11" rx="2.5" />
+    <path d="M16 10.5l5-3v9l-5-3" />
+  </Base>
+)
+
+export const IconImage = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="3" />
+    <circle cx="9" cy="10" r="1.6" />
+    <path d="M4.5 17l4.5-4.2 3.2 2.8 2.6-2.2 4.7 4.1" />
+  </Base>
+)

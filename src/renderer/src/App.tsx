@@ -12,6 +12,8 @@ import { CommandBar } from './hud/CommandBar'
 import { DispatchSheet } from './hud/DispatchSheet'
 import { DigestCard } from './hud/DigestCard'
 import { Toasts } from './hud/Toasts'
+import { CapturePill } from './hud/Capture'
+import { cancelCapture, captureBusy, recordFlyover, takeSnapshot, useCapture } from './lib/capture'
 
 // The 3D scene is code-split. If it fails to load or throws, the window keeps a static gradient.
 const CityCanvas = lazy(() => import('./city/CityCanvas'))
@@ -43,6 +45,10 @@ function isTyping(target: EventTarget | null): boolean {
 
 /** Escape closes the top-most overlay, then clears the selection, then the agent focus. */
 function handleEscape(): void {
+  if (captureBusy()) {
+    cancelCapture()
+    return
+  }
   const ui = useUi.getState()
   const s = useSky.getState()
   if (ui.palette) ui.setPalette(false)
@@ -74,12 +80,18 @@ function onKeyDown(e: KeyboardEvent): void {
   if (mod || isTyping(e.target)) return
 
   const ui = useUi.getState()
-  // Overlays own their keys while open.
-  if (ui.palette || ui.dispatch || ui.digest) return
+  // Overlays own their keys while open. A capture in progress ignores everything but Esc.
+  if (ui.palette || ui.dispatch || ui.digest || captureBusy()) return
 
   const s = useSky.getState()
   let handled = true
   switch (key) {
+    case 's':
+      if (s.repo) {
+        if (e.shiftKey) void recordFlyover()
+        else void takeSnapshot()
+      }
+      break
     case 'd':
       if (s.repo) ui.setDispatch(true)
       break
@@ -91,6 +103,7 @@ function onKeyDown(e: KeyboardEvent): void {
       break
     case 'f':
       s.select(null)
+      s.requestFrame()
       break
     case '1':
       setMode('live')
@@ -114,6 +127,7 @@ export function App() {
   const repo = useSky((s) => s.repo)
   const reducedMotion = useSky((s) => s.reducedMotion)
   const scanning = useUi((s) => s.scanning)
+  const flying = useCapture((s) => s.busy === 'flyover')
 
   // Subscriptions to main-process events. Returns the disposer; StrictMode runs this twice in dev.
   useEffect(() => bootstrapSky(window.skyline), [])
@@ -165,7 +179,8 @@ export function App() {
         </CityBoundary>
       </div>
 
-      <div className="hud">
+      {/* During a flyover the HUD is hidden, except the recording pill (see .hud--flying). */}
+      <div className={`hud${flying ? ' hud--flying' : ''}`}>
         <TitleBar />
         {repo && <AgentDock />}
         {repo && <Inspector />}
@@ -177,6 +192,7 @@ export function App() {
         <DigestOverlayGate />
         <PaletteGate />
         <DispatchGate />
+        <CapturePill />
       </div>
     </>
   )

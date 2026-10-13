@@ -4,6 +4,7 @@ import { useUi } from '../lib/ui'
 import { compactNumber, usd } from '../lib/format'
 import { useNow } from '../lib/hooks'
 import { pickAndOpen } from '../lib/actions'
+import { CaptureMenu } from './Capture'
 import { IconChevronDown, IconFolder, IconGitBranch, IconMinus, IconSearch, IconSquare, IconX, SkylineGlyph } from './icons'
 
 const MODE_META: Record<Mode, { label: string; color: string; live: boolean }> = {
@@ -89,6 +90,8 @@ export function TitleBar() {
         <span className="muted">Search</span>
         <span className="kbd">{isMac ? '⌘K' : 'Ctrl K'}</span>
       </button>
+
+      {repo && <CaptureMenu />}
 
       {repo ? (
         <button className="capsule capsule--ghost capsule--sm" onClick={() => void pickAndOpen()} title="Open another repository (Ctrl O)">

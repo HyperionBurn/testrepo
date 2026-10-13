@@ -30,6 +30,11 @@ const on = (channel: EventChannel, cb: (payload: unknown) => void): (() => void)
   }
 }
 
+const parseSeconds = (v: string | undefined): number | undefined => {
+  const n = Number(v)
+  return v && Number.isFinite(n) && n > 0 ? n : undefined
+}
+
 const api: SkylineAPI = {
   pickFolder: () => call<string | null>(IPC.pickFolder),
   openRepo: (root) => call<RepoSnapshot>(IPC.openRepo, root),
@@ -52,7 +57,9 @@ const api: SkylineAPI = {
   },
   platform: process.platform,
   autoOpen: () => call<string | null>(IPC.autoOpen),
-  listSessions: () => call<RecentSession[]>(IPC.listSessions)
+  listSessions: () => call<RecentSession[]>(IPC.listSessions),
+  saveCapture: (data, suggestedName, copy) => call<string | null>(IPC.saveCapture, data, suggestedName, copy === true),
+  flyoverSeconds: parseSeconds(process.env.SKYLINE_FLYOVER_SECONDS)
 }
 
 contextBridge.exposeInMainWorld('skyline', api)

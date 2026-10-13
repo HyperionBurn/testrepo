@@ -12,6 +12,8 @@ import type {
 import { buildLayout } from '@shared/layout'
 
 export type Mode = 'live' | 'replay' | 'git';
+/** A capture that stages the camera: the framed city for a snapshot, or the orbit for a flyover. */
+export type CaptureMode = 'snapshot' | 'flyover';
 export interface Heat { ts: number; agentId: string; kind: AgentEventType }
 
 /** Events kept in memory (ascending ts). Older events are dropped from the front. */
@@ -25,12 +27,16 @@ interface SkyState {
   mode: Mode; replayTs: number | null;                   // replay: show state as of replayTs
   commits: GitCommit[]; firstSeen: Record<string, number>; gitTs: number | null; // git time-lapse
   showImports: boolean; reducedMotion: boolean;
+  frameSeq: number;                                      // bumped to glide the camera to the framed pose (F, repo open)
+  capture: CaptureMode | null;                           // set while the camera is staged for a capture (also hides the HUD for flyovers)
+  captureDpr: number | null;                             // raised pixel ratio while a snapshot is rendered, so the image is large enough
   setRepo(s: RepoSnapshot): void;                        // recompute layout via buildLayout
   setAgents(a: AgentInfo[]): void; pushEvent(e: AgentEvent): void; setEvents(e: AgentEvent[]): void;
   select(path: string | null): void; hover(path: string | null): void; focusAgent(id: string | null): void;
   setMode(m: Mode): void; setReplayTs(ts: number | null): void;
   setCommits(c: GitCommit[]): void;                      // computes firstSeen (earliest commit ts per path)
   setGitTs(ts: number | null): void; toggleImports(): void;
+  requestFrame(): void; setCapture(m: CaptureMode | null): void; setCaptureDpr(d: number | null): void;
 }
 
 /** Event types that count as touching a file for heat. */
@@ -109,6 +115,9 @@ export const useSky = create<SkyState>()((set, get) => ({
   gitTs: null,
   showImports: false,
   reducedMotion: detectReducedMotion(),
+  frameSeq: 0,
+  capture: null,
+  captureDpr: null,
 
   setRepo(s) {
     const layout = buildLayout(s)
@@ -182,6 +191,18 @@ export const useSky = create<SkyState>()((set, get) => ({
 
   toggleImports() {
     set({ showImports: !get().showImports })
+  },
+
+  requestFrame() {
+    set({ frameSeq: get().frameSeq + 1 })
+  },
+
+  setCapture(m) {
+    set({ capture: m })
+  },
+
+  setCaptureDpr(d) {
+    set({ captureDpr: d })
   }
 }))
 

@@ -19,7 +19,8 @@ export const IPC = {
   winMin: 'skyline:window:minimize',
   winMax: 'skyline:window:maximize',
   winClose: 'skyline:window:close',
-  autoOpen: 'skyline:autoOpen'
+  autoOpen: 'skyline:autoOpen',
+  saveCapture: 'skyline:saveCapture'
 } as const
 
 export type IpcInvokeChannel = (typeof IPC)[keyof typeof IPC]

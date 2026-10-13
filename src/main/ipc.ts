@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, shell } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { promises as fsp } from 'node:fs'
 import * as path from 'node:path'
 import { eventChannel, IPC, type EventChannel } from '@shared/ipc'
@@ -230,7 +231,8 @@ export function registerIpc(win: BrowserWindow): void {
     const s = session
     const events = s?.getEvents(since) ?? []
     const agents = s?.getAgents() ?? []
-    return (await getLlm()).digest(events, agents, s?.displayName ?? 'repository')
+    // A fresh id per request: the renderer drops a late 'digest' event that answers an older request.
+    return (await getLlm()).digest(events, agents, s?.displayName ?? 'repository', randomUUID())
   })
 
   ipcMain.handle(IPC.explain, async (_e, rel: unknown): Promise<string> => {
@@ -248,6 +250,48 @@ export function registerIpc(win: BrowserWindow): void {
   })
 
   ipcMain.handle(IPC.autoOpen, (): string | null => process.env.SKYLINE_OPEN || null)
+
+  ipcMain.handle(IPC.saveCapture, async (_e, data: unknown, suggestedName: unknown, copy: unknown): Promise<string | null> => {
+    return saveCapture(win, data, suggestedName, copy === true)
+  })
+}
+
+const MAX_CAPTURE_BYTES = 256 * 1024 * 1024
+
+/**
+ * Saves a capture after a save dialog. Under SKYLINE_CAPTURE_DIR (tests) it writes straight there.
+ * PNGs can also go to the clipboard. The dialog is skipped for the file manager reveal in test mode.
+ */
+async function saveCapture(win: BrowserWindow, data: unknown, suggestedName: unknown, copy: boolean): Promise<string | null> {
+  if (!(data instanceof Uint8Array) || data.byteLength === 0) throw new Error('Capture is empty')
+  if (data.byteLength > MAX_CAPTURE_BYTES) throw new Error('Capture is too large')
+  const name = asString(suggestedName, 'File name').replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').trim()
+  const base = path.basename(name) || 'Skyline-capture'
+  const ext = path.extname(base).toLowerCase()
+  const isImage = ext === '.png'
+  const buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+
+  const testDir = process.env.SKYLINE_CAPTURE_DIR
+  let target: string
+  if (testDir) {
+    await fsp.mkdir(testDir, { recursive: true })
+    target = path.join(testDir, base)
+  } else {
+    const result = await dialog.showSaveDialog(win, {
+      defaultPath: path.join(app.getPath(isImage ? 'pictures' : 'videos'), base),
+      filters: isImage ? [{ name: 'PNG image', extensions: ['png'] }] : [{ name: 'WebM video', extensions: ['webm'] }]
+    })
+    if (result.canceled || !result.filePath) return null
+    target = result.filePath
+  }
+
+  await fsp.writeFile(target, buf)
+  if (copy && isImage) {
+    const image = nativeImage.createFromBuffer(buf)
+    if (!image.isEmpty()) clipboard.writeImage(image)
+  }
+  if (!testDir) shell.showItemInFolder(target)
+  return target
 }
 
 /**
