@@ -1,16 +1,18 @@
 // Ground: a dark plane with a fine grid that fades into the fog, district plates (stacked glass
-// slabs, 0.08 units per depth) with luminous outlines, and top-level district names lying in the streets.
-import { useEffect, useMemo, useRef } from 'react'
+// slabs, 0.08 units per depth) with luminous outlines, and neighborhood names lying on their plates.
+import { useEffect, useMemo } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import {
   AdditiveBlending, BoxGeometry, BufferGeometry, CanvasTexture, Color, Float32BufferAttribute,
   InstancedMesh, LineBasicMaterial, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial,
-  PlaneGeometry, Quaternion, ShaderMaterial, SRGBColorSpace, Vector3
+  PerspectiveCamera, PlaneGeometry, Quaternion, ShaderMaterial, SRGBColorSpace, Vector3
 } from 'three'
 import type { CityDistrict } from '@shared/types'
+import type { NeighborhoodIndex } from '@shared/layout'
 import { useSky } from '../state/store'
 import { isClick } from './registry'
 import { FOG_DENSITY, FOG_HEX } from './Sky'
+import { placeLabels, type LabelCandidate, type PlacedLabel } from './labelLayout'
 
 const PLATE_HEIGHT_PER_DEPTH = 0.08
 
@@ -75,8 +77,16 @@ export function Ground() {
   )
 }
 
-/** District plates, outlines and labels for one layout. */
-export function Districts({ districts }: { districts: readonly CityDistrict[] }) {
+/** District plates, outlines and neighborhood labels for one layout. */
+export function Districts({
+  districts,
+  hoods,
+  areaColors
+}: {
+  districts: readonly CityDistrict[];
+  hoods: NeighborhoodIndex | null;
+  areaColors: ReadonlyMap<string, string> | null;
+}) {
   const plateGeo = useMemo(() => {
     const g = new BoxGeometry(1, 1, 1)
     g.translate(0, 0.5, 0)
@@ -148,59 +158,103 @@ export function Districts({ districts }: { districts: readonly CityDistrict[] })
     <>
       <primitive object={plates} />
       <lineSegments geometry={outlineGeo} material={outlineMat} />
-      <DistrictLabels districts={districts} />
+      <NeighborhoodLabels districts={districts} hoods={hoods} areaColors={areaColors} />
     </>
   )
 }
 
-interface Label { mesh: Mesh; mat: MeshBasicMaterial; tex: CanvasTexture; geo: PlaneGeometry; pos: Vector3 }
+interface Label { mesh: Mesh; mat: MeshBasicMaterial; tex: CanvasTexture; geo: PlaneGeometry; pos: Vector3; h: number }
 
-/** Canvas-rendered label (system font, no network). Lies flat in the street beside its district. */
-function makeLabel(text: string, x: number, z: number): Label | null {
+const LABEL_CANVAS_H = 128
+const LABEL_PAD_PX = 28
+const LABEL_FONT = '800 96px "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif'
+
+let measureCtx: CanvasRenderingContext2D | null | undefined
+
+function setLabelFont(ctx: CanvasRenderingContext2D): void {
+  ctx.font = LABEL_FONT
+  ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = '1px'
+}
+
+/** Width of a label's canvas in pixels: the text plus padding. Falls back to a rough estimate without a canvas. */
+function labelWidthPx(text: string): number {
+  if (measureCtx === undefined) {
+    measureCtx = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d')
+  }
+  if (!measureCtx) return text.length * 58 + 2 * LABEL_PAD_PX
+  setLabelFont(measureCtx)
+  return Math.ceil(measureCtx.measureText(text).width) + 2 * LABEL_PAD_PX
+}
+
+/** Canvas aspect (width over height) of a label, as the placement sees it. */
+function labelAspect(text: string): number {
+  return labelWidthPx(text) / LABEL_CANVAS_H
+}
+
+/** Canvas-rendered label (system font, no network). Lies flat on its plate, centred on it. */
+function makeLabel(p: PlacedLabel, glow: string): Label | null {
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')
   if (!ctx) return null
-  const font = '700 84px "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif'
-  const label = text.toUpperCase()
-  ctx.font = font
-  ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = '8px'
-  const textW = Math.ceil(ctx.measureText(label).width)
-  canvas.width = textW + 64
-  canvas.height = 140
-  ctx.font = font
-  ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = '8px'
+  canvas.width = labelWidthPx(p.key)
+  canvas.height = LABEL_CANVAS_H
+  setLabelFont(ctx)
   ctx.textBaseline = 'middle'
+  ctx.lineJoin = 'round'
+  // A dark halo keeps the name readable over towers, a hue glow ties it to its neighborhood.
+  ctx.strokeStyle = 'rgba(3, 4, 10, 0.9)'
+  ctx.lineWidth = 9
+  ctx.shadowColor = glow
+  ctx.shadowBlur = 26
+  ctx.strokeText(p.key, LABEL_PAD_PX, LABEL_CANVAS_H / 2 + 4)
   ctx.fillStyle = '#f1f6ff'
-  ctx.shadowColor = '#5b9bff'
-  ctx.shadowBlur = 28
-  ctx.fillText(label, 32, 74)
+  ctx.fillText(p.key, LABEL_PAD_PX, LABEL_CANVAS_H / 2 + 4)
   const tex = new CanvasTexture(canvas)
   tex.colorSpace = SRGBColorSpace
   tex.anisotropy = 4
-  const height = 2.2
-  const width = height * (canvas.width / canvas.height)
-  const geo = new PlaneGeometry(width, height)
-  // Labels ignore depth so towers in front do not hide the district names; they fade with distance instead.
-  const mat = new MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false, opacity: 0 })
+  const width = p.w
+  const geo = new PlaneGeometry(width, p.h)
+  // Labels ignore depth so towers in front do not hide the names; they fade with distance and size instead.
+  // Fog off: at framing distance the scene fog would wash a name into the sky color. Distance fades instead.
+  const mat = new MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false, fog: false, opacity: 0 })
   const mesh = new Mesh(geo, mat)
   mesh.rotation.x = -Math.PI / 2
-  mesh.position.set(x + width / 2, 0.1, z)
+  mesh.position.set(p.cx, 0.1, p.cz)
   mesh.raycast = () => {}
   mesh.renderOrder = 5
-  return { mesh, mat, tex, geo, pos: mesh.position.clone() }
+  return { mesh, mat, tex, geo, pos: mesh.position.clone(), h: p.h }
 }
 
-function DistrictLabels({ districts }: { districts: readonly CityDistrict[] }) {
+/**
+ * Names for neighborhoods (the directories chosen by neighborhoodIndex), sized by plate area and placed without
+ * overlaps (see placeLabels). Each glows in its neighborhood's hue.
+ */
+function NeighborhoodLabels({
+  districts,
+  hoods,
+  areaColors
+}: {
+  districts: readonly CityDistrict[];
+  hoods: NeighborhoodIndex | null;
+  areaColors: ReadonlyMap<string, string> | null;
+}) {
   const labels = useMemo<Label[]>(() => {
+    if (!hoods) return []
+    const plates = new Map(districts.map((d) => [d.name, d] as const))
+    const cands: LabelCandidate[] = []
+    for (const g of hoods.groups) {
+      if (g.key === '') continue // root-level files have no plate
+      const d = plates.get(g.key)
+      if (!d) continue
+      cands.push({ key: g.key, x: d.x, z: d.z, w: d.w, d: d.d, aspect: labelAspect(g.key) })
+    }
     const out: Label[] = []
-    for (const d of districts) {
-      if (d.depth !== 1) continue
-      // Centred in the 2.4 unit street just below the plate's min-z edge (its midline is 1.2 out).
-      const l = makeLabel(d.name, d.x + 0.4, d.z - 1.2)
+    for (const p of placeLabels(cands)) {
+      const l = makeLabel(p, areaColors?.get(p.key) ?? '#5b9bff')
       if (l) out.push(l)
     }
     return out
-  }, [districts])
+  }, [districts, hoods, areaColors])
 
   useEffect(() => () => {
     for (const l of labels) {
@@ -210,12 +264,15 @@ function DistrictLabels({ districts }: { districts: readonly CityDistrict[] }) {
     }
   }, [labels])
 
-  useFrame(({ camera }) => {
+  useFrame(({ camera, size }) => {
+    // On-screen label height in pixels, from the camera's vertical field of view.
+    const pxPerUnit = size.height / (2 * Math.tan(((camera as PerspectiveCamera).fov * Math.PI) / 360))
     for (const l of labels) {
-      const dist = camera.position.distanceTo(l.pos)
-      const near = smooth(12, 30, dist)
-      const far = 1 - smooth(200, 250, dist)
-      l.mat.opacity = 0.8 * near * far
+      const dist = Math.max(1e-3, camera.position.distanceTo(l.pos))
+      const legible = smooth(7, 13, (l.h * pxPerUnit) / dist)
+      const near = smooth(10, 28, dist)
+      const far = 1 - smooth(380, 520, dist)
+      l.mat.opacity = 0.92 * near * far * legible
     }
   })
 

@@ -4,9 +4,17 @@ import type { AgentEvent, AgentInfo, FileNode } from '@shared/types'
 import { useSky } from '../state/store'
 import { useUi } from '../lib/ui'
 import { basename, dirname, fuzzyScore, middleEllipsis } from '../lib/format'
+import { COLOR_MODE_LABEL, type ColorMode } from '../lib/colorModes'
 import { pickAndOpen, setMode } from '../lib/actions'
 import { Overlay } from './Overlay'
 import { IconArrowRight, IconClock, IconDoc, IconFolder, IconLink, IconSend, IconSparkle, IconWave, IconReplay } from './icons'
+
+const COLOR_ACTION_META: Record<ColorMode, { sub: string; icon: ReactNode }> = {
+  area: { sub: 'One hue per neighborhood', icon: <IconFolder size={13} /> },
+  language: { sub: 'Color by file type', icon: <IconDoc size={13} /> },
+  churn: { sub: 'Most-committed files glow hot', icon: <IconSparkle size={13} /> },
+  age: { sub: 'Recently changed files glow mint', icon: <IconClock size={13} /> }
+}
 
 interface Item {
   key: string;
@@ -25,8 +33,23 @@ function close(): void {
   useUi.getState().setPalette(false)
 }
 
-function actionItems(q: string): Item[] {
+function colorItems(current: ColorMode): Item[] {
+  return (Object.keys(COLOR_ACTION_META) as ColorMode[]).map((m) => ({
+    key: `a-color-${m}`,
+    group: 'Actions',
+    label: `Color by ${COLOR_MODE_LABEL[m].toLowerCase()}`,
+    sub: m === current ? `${COLOR_ACTION_META[m].sub} · current` : COLOR_ACTION_META[m].sub,
+    icon: COLOR_ACTION_META[m].icon,
+    run: () => {
+      close()
+      useSky.getState().setColorMode(m)
+    }
+  }))
+}
+
+function actionItems(q: string, color: ColorMode): Item[] {
   const all: Item[] = [
+    ...colorItems(color),
     {
       key: 'a-dispatch',
       group: 'Actions',
@@ -186,6 +209,7 @@ export function CommandBar() {
   const repo = useSky((s) => s.repo)
   const agents = useSky((s) => s.agents)
   const events = useSky((s) => s.events)
+  const color = useSky((s) => s.colorMode)
   const [q, setQ] = useState('')
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -195,10 +219,10 @@ export function CommandBar() {
   const items = useMemo<Item[]>(() => {
     const files = repo?.files ?? []
     const groups = query
-      ? [...agentItems(query, agents), ...fileItems(query, files, []), ...actionItems(query)]
-      : [...actionItems(''), ...agentItems('', agents), ...fileItems('', files, recentlyTouched(events))]
+      ? [...agentItems(query, agents), ...fileItems(query, files, []), ...actionItems(query, color)]
+      : [...actionItems('', color), ...agentItems('', agents), ...fileItems('', files, recentlyTouched(events))]
     return groups
-  }, [query, repo, agents, events])
+  }, [query, repo, agents, events, color])
 
   useEffect(() => {
     inputRef.current?.focus()

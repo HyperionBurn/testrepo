@@ -8,6 +8,7 @@ import { Welcome, Scanning } from './hud/Welcome'
 import { AgentDock } from './hud/AgentDock'
 import { Inspector } from './hud/Inspector'
 import { Timeline } from './hud/Timeline'
+import { ColorLegend } from './hud/ColorLegend'
 import { CommandBar } from './hud/CommandBar'
 import { DispatchSheet } from './hud/DispatchSheet'
 import { DigestCard } from './hud/DigestCard'
@@ -101,6 +102,9 @@ function onKeyDown(e: KeyboardEvent): void {
     case 'i':
       s.toggleImports()
       break
+    case 'c':
+      s.cycleColorMode()
+      break
     case 'f':
       s.select(null)
       s.requestFrame()
@@ -185,6 +189,7 @@ export function App() {
         {repo && <AgentDock />}
         {repo && <Inspector />}
         {repo && <Timeline />}
+        {repo && <ColorLegend />}
         {!repo && scanning && <Scanning />}
         {!repo && !scanning && <Welcome />}
 

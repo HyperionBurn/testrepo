@@ -21,7 +21,9 @@ const NO_DISTRICTS: CityDistrict[] = []
 
 function CityDistricts() {
   const districts = useSky((s) => s.layout?.districts ?? NO_DISTRICTS)
-  return <Districts districts={districts} />
+  const hoods = useSky((s) => s.hoods)
+  const areaColors = useSky((s) => s.colorPlan?.areaColors ?? null)
+  return <Districts districts={districts} hoods={hoods} areaColors={areaColors} />
 }
 
 /**
@@ -50,6 +52,7 @@ function CaptureTap({ composed }: { composed: boolean }) {
 export default function CityCanvas() {
   const reduced = useSky((s) => s.reducedMotion)
   const captureDpr = useSky((s) => s.captureDpr)
+  const capturing = useSky((s) => s.capture !== null)
   const [lowPerf, setLowPerf] = useState(false)
   const [dpr, setDpr] = useState(() => Math.min(window.devicePixelRatio || 1, 2))
 
@@ -60,7 +63,9 @@ export default function CityCanvas() {
     return () => window.removeEventListener('pointerdown', down, true)
   }, [])
 
-  const composed = !reduced && !lowPerf
+  // A capture always gets the composer (bloom, tone mapping, SMAA), even when the frame rate had degraded it.
+  // Once the capture ends the normal rule applies again.
+  const composed = capturing || (!reduced && !lowPerf)
 
   return (
     <div style={{ position: 'absolute', inset: 0, background: '#03040a', overflow: 'hidden' }}>
@@ -78,6 +83,8 @@ export default function CityCanvas() {
         <fogExp2 attach="fog" args={[FOG_HEX, FOG_DENSITY]} />
         <PerformanceMonitor
           onDecline={() => {
+            // A snapshot or flyover renders heavier frames on purpose; do not let that lower the quality for good.
+            if (useSky.getState().capture !== null) return
             setLowPerf(true)
             setDpr(1)
           }}

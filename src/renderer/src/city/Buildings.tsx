@@ -16,9 +16,14 @@ export function Buildings() {
   const firstSeen = useSky((s) => s.firstSeen)
   const hoveredPath = useSky((s) => s.hoveredPath)
   const selectedPath = useSky((s) => s.selectedPath)
+  const plan = useSky((s) => s.colorPlan)
 
   const shader = useMemo(() => createBuildingMaterial(), [])
   const prevRef = useRef<BuildingField | null>(null)
+  // The field is rebuilt only with the layout, so it reads the current colors from here. A color mode change
+  // reaches the existing field through setColors (animated), not a rebuild.
+  const colorsRef = useRef<ReadonlyMap<string, string> | null>(null)
+  colorsRef.current = plan?.colors ?? null
 
   // Built during render from the last committed field, so the animation state carries over.
   const field = useMemo(() => {
@@ -27,9 +32,14 @@ export function Buildings() {
     return new BuildingField(layout, shader.material, prevRef.current, {
       mode: s.mode,
       gitTs: s.gitTs,
-      firstSeen: s.firstSeen
+      firstSeen: s.firstSeen,
+      colors: colorsRef.current
     })
   }, [layout, shader])
+
+  useEffect(() => {
+    if (field && plan) field.setColors(plan.colors)
+  }, [field, plan])
 
   useEffect(() => {
     prevRef.current = field

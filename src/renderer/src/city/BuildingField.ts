@@ -8,6 +8,8 @@ import { towerHeight } from './geom'
 
 /** Seconds for a touch glow to fade from 1 to 0. */
 export const HEAT_DECAY_S = 25
+/** Seconds for a building to move from one color mode's color to the next. */
+export const COLOR_FADE_S = 0.4
 const SPRING_K = 60
 const SPRING_C = 2 * Math.sqrt(SPRING_K) // critical damping
 const SHIMMER_RATE = 1.6
@@ -16,6 +18,8 @@ export interface FieldGate {
   mode: Mode;
   gitTs: number | null;
   firstSeen: Record<string, number>;
+  /** Building colors by path for the current color mode. Missing paths keep the layout's language color. */
+  colors?: ReadonlyMap<string, string> | null;
 }
 
 interface Slot {
@@ -28,7 +32,7 @@ interface Slot {
   seed: number;           // [0,1), stable per path
   ghost: boolean;         // file left the repo: sinking into the ground
   dead: boolean;          // finished sinking, hidden until the next layout
-  lr: number; lg: number; lb: number; // language color, linear
+  base: string;           // the layout's color (language), used when a color mode has no entry for the path
   writtenH: number;       // height last written to the instance buffers
 }
 
@@ -60,6 +64,11 @@ export class BuildingField {
   private selIdx = -1;
   private dirtyGeom = false;
   private dirtyAttr = false;
+  // Color transition: aLang moves from colorFrom to colorTo over COLOR_FADE_S. colorT 1 means settled.
+  private colorFrom = new Float32Array(0);
+  private colorTo = new Float32Array(0);
+  private colorT = 1;
+  private dirtyColor = false;
 
   constructor(layout: CityLayout, material: MeshStandardMaterial, prev: BuildingField | null, gate: FieldGate) {
     const nowPaths = new Set<string>()
@@ -68,7 +77,6 @@ export class BuildingField {
     for (const b of layout.buildings) {
       nowPaths.add(b.path)
       const old = prev?.slotFor(b.path)
-      const c = new Color(b.color)
       slots.push({
         path: b.path,
         x: b.x, z: b.z, w: b.w, d: b.d,
@@ -81,7 +89,7 @@ export class BuildingField {
         seed: hashSeed(b.path),
         ghost: false,
         dead: false,
-        lr: c.r, lg: c.g, lb: c.b,
+        base: b.color,
         writtenH: -1
       })
     }
@@ -117,15 +125,51 @@ export class BuildingField {
     this.mesh.count = slots.length
     this.mesh.frustumCulled = false
 
+    const tmp = new Color()
     slots.forEach((s, i) => {
       if (!s.ghost) this.byPath.set(s.path, i)
-      this.aLang.setXYZ(i, s.lr, s.lg, s.lb)
+      tmp.set(gate.colors?.get(s.path) ?? s.base)
+      this.aLang.setXYZ(i, tmp.r, tmp.g, tmp.b)
       this.aSeed.setX(i, s.seed)
       this.aShim.setX(i, s.shim)
       this.writeGeom(i)
     })
     this.retarget(gate.mode, gate.gitTs, gate.firstSeen)
     this.commit()
+  }
+
+  /**
+   * Recolors the buildings for a color mode. Animated buildings ease from their current color over COLOR_FADE_S;
+   * animate=false applies the colors at once. Ghosts (files that left the repo) keep their color.
+   */
+  setColors(colors: ReadonlyMap<string, string>, animate = true): void {
+    const n = this.slots.length
+    const current = this.aLang.array as Float32Array
+    const to = new Float32Array(n * 3)
+    const c = new Color()
+    for (let i = 0; i < n; i++) {
+      const s = this.slots[i]
+      if (!s) continue
+      if (s.ghost) {
+        to[i * 3] = current[i * 3] ?? 0
+        to[i * 3 + 1] = current[i * 3 + 1] ?? 0
+        to[i * 3 + 2] = current[i * 3 + 2] ?? 0
+        continue
+      }
+      c.set(colors.get(s.path) ?? s.base)
+      to[i * 3] = c.r
+      to[i * 3 + 1] = c.g
+      to[i * 3 + 2] = c.b
+    }
+    if (!animate) {
+      current.set(to)
+      this.colorT = 1
+      this.dirtyColor = true
+      return
+    }
+    this.colorFrom = current.slice(0, n * 3)
+    this.colorTo = to
+    this.colorT = 0
   }
 
   /** Slot for a live (non-ghost) building path. */
@@ -157,8 +201,9 @@ export class BuildingField {
     }
   }
 
-  /** Advances the height springs, shimmer and ghost sinking. dt in seconds. */
+  /** Advances the height springs, shimmer, ghost sinking and color transition. dt in seconds. */
   step(dt: number): void {
+    if (this.colorT < 1) this.stepColor(dt)
     const slots = this.slots
     for (let i = 0; i < slots.length; i++) {
       const s = slots[i]
@@ -187,6 +232,17 @@ export class BuildingField {
         this.dirtyAttr = true
       }
     }
+  }
+
+  private stepColor(dt: number): void {
+    this.colorT = Math.min(1, this.colorT + dt / COLOR_FADE_S)
+    const e = this.colorT * this.colorT * (3 - 2 * this.colorT) // smoothstep
+    const cur = this.aLang.array as Float32Array
+    const from = this.colorFrom
+    const to = this.colorTo
+    const m = Math.min(cur.length, from.length, to.length)
+    for (let k = 0; k < m; k++) cur[k] = (from[k] ?? 0) + ((to[k] ?? 0) - (from[k] ?? 0)) * e
+    this.dirtyColor = true
   }
 
   /** Glow for touched buildings: 1 at the touch, fading over HEAT_DECAY_S. Reads are dimmer. */
@@ -238,6 +294,10 @@ export class BuildingField {
     if (this.dirtyGeom) {
       this.mesh.instanceMatrix.needsUpdate = true
       this.aSize.needsUpdate = true
+    }
+    if (this.dirtyColor) {
+      this.aLang.needsUpdate = true
+      this.dirtyColor = false
     }
     if (this.dirtyAttr) {
       this.aShim.needsUpdate = true

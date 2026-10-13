@@ -376,3 +376,102 @@ export function layoutBounds(layout: CityLayout): { minX: number; maxX: number; 
   const h = layout.size / 2
   return { minX: -h, maxX: h, minZ: -h, maxZ: h, size: layout.size }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Neighborhoods: the groups a city is colored and labeled by. A neighborhood is a directory,
+// usually one or two levels below the root, so a repo that keeps everything under src/ still
+// reads as several areas (src/main, src/renderer, ...) rather than one.
+
+/** Most directory levels the neighborhood search descends through. */
+export const NEIGHBORHOOD_LEVELS = 3
+/** A directory holding more than this share of all files is split one level further. */
+export const NEIGHBORHOOD_SHARE = 0.7
+
+export interface Neighborhood {
+  /** Repo-relative directory, or '' for files at the repo root. */
+  key: string;
+  count: number;
+}
+
+export interface NeighborhoodIndex {
+  /** Directories the search descended through, outermost first. Empty when top-level directories split the repo. */
+  chain: string[];
+  /** Neighborhood key for each (normalized) file path. */
+  keyOf: Map<string, string>;
+  /** Largest first, ties by key. */
+  groups: Neighborhood[];
+}
+
+/** Neighborhood key of one file, given the descent chain. Files directly in the deepest chain directory key to that directory. */
+export function neighborhoodOf(path: string, chain: readonly string[]): string {
+  const p = normalizePath(path)
+  let base = ''
+  for (const dir of chain) {
+    if (!p.startsWith(`${dir}/`)) break
+    base = dir
+  }
+  const rest = p.slice(base === '' ? 0 : base.length + 1).split('/')
+  if (rest.length < 2) return base
+  return base === '' ? (rest[0] ?? '') : `${base}/${rest[0] ?? ''}`
+}
+
+function distinctNeighborhoods(paths: readonly string[], chain: readonly string[]): number {
+  const keys = new Set<string>()
+  for (const p of paths) keys.add(neighborhoodOf(p, chain))
+  return keys.size
+}
+
+/**
+ * The directory chain that defines the neighborhoods. Starting at the root, the search descends into a
+ * directory while one of its subdirectories holds more than NEIGHBORHOOD_SHARE of all files, for at most
+ * NEIGHBORHOOD_LEVELS directories. A descent is kept only if it actually splits the files into at least two
+ * neighborhoods (trailing levels that do not are dropped).
+ */
+export function neighborhoodChain(paths: readonly string[]): string[] {
+  const files = [...new Set(paths.map(normalizePath))].filter((p) => p !== '')
+  const total = files.length
+  const chain: string[] = []
+  if (total === 0) return chain
+
+  while (chain.length < NEIGHBORHOOD_LEVELS) {
+    const base = chain[chain.length - 1] ?? ''
+    const prefix = base === '' ? '' : `${base}/`
+    const counts = new Map<string, number>()
+    for (const p of files) {
+      if (!p.startsWith(prefix)) continue
+      const rest = p.slice(prefix.length).split('/')
+      if (rest.length < 2) continue // directly in base: not part of a subdirectory
+      const child = `${prefix}${rest[0] ?? ''}`
+      counts.set(child, (counts.get(child) ?? 0) + 1)
+    }
+    let best = ''
+    let bestN = 0
+    for (const [dir, n] of counts) {
+      if (n > bestN || (n === bestN && dir < best)) {
+        best = dir
+        bestN = n
+      }
+    }
+    if (bestN === 0 || bestN <= NEIGHBORHOOD_SHARE * total) break
+    chain.push(best)
+  }
+
+  while (chain.length > 0 && distinctNeighborhoods(files, chain) < 2) chain.pop()
+  return chain
+}
+
+/** Neighborhoods for a set of file paths: the chain, each file's key, and the groups by size. */
+export function neighborhoodIndex(paths: readonly string[]): NeighborhoodIndex {
+  const files = [...new Set(paths.map(normalizePath))].filter((p) => p !== '')
+  const chain = neighborhoodChain(files)
+  const keyOf = new Map<string, string>()
+  const counts = new Map<string, number>()
+  for (const p of files) {
+    const key = neighborhoodOf(p, chain)
+    keyOf.set(p, key)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  const groups = [...counts].map(([key, count]) => ({ key, count }))
+  groups.sort((a, b) => b.count - a.count || compareStrings(a.key, b.key))
+  return { chain, keyOf, groups }
+}

@@ -57,7 +57,8 @@ float isSel = step(0.75, vSel);
 float rimW = max(fwidth(med) * 1.6, 0.03);
 float rim = 1.0 - smoothstep(rimW * 0.5, rimW, med);
 float rimWide = 1.0 - smoothstep(0.05, 0.22, med);
-vec3 body = mix(vec3(0.005, 0.008, 0.014), vLang * 0.05, 0.9);
+// Glass tint: walls carry the hue, and roofs (the surface a high camera sees most) carry more of it.
+vec3 body = mix(vec3(0.005, 0.008, 0.014), vLang * mix(0.55, 0.24, side), 0.9);
 body *= 0.82 + 0.18 * clamp(vQ.y / max(vSize.y, 1.0), 0.0, 1.0);
 body += vec3(0.04, 0.05, 0.07) * hov;
 body = mix(body, vGlowCol * 0.45, clamp(vGlow, 0.0, 1.0) * 0.85);
@@ -77,7 +78,7 @@ float winShape = smoothstep(0.12, 0.28, wf.x) * smoothstep(0.12, 0.28, 1.0 - wf.
   * smoothstep(0.14, 0.3, wf.y) * smoothstep(0.14, 0.3, 1.0 - wf.y);
 float wfw = max(fwidth(wc.x), fwidth(wc.y));
 float winFade = 1.0 - smoothstep(0.25, 0.6, wfw);
-totalEmissiveRadiance += mix(vLang, vec3(1.0), 0.15) * winOn * winShape * side * winFade * (0.1 + 0.16 * wh);
+totalEmissiveRadiance += mix(vLang, vec3(1.0), 0.12) * winOn * winShape * side * winFade * (0.12 + 0.2 * wh);
 // Luminous edges in the language color.
 totalEmissiveRadiance += vLang * rim * (1.9 + 1.0 * (1.0 - side));
 totalEmissiveRadiance += vLang * 0.05 * (1.0 - side);
@@ -91,6 +92,13 @@ totalEmissiveRadiance += vec3(1.0) * hov * rim * 1.1;
 float scan = fract(vQ.y * 0.45 - uTime * 0.8 + vSeed);
 float band = smoothstep(0.82, 1.0, scan);
 totalEmissiveRadiance += vec3(0.45, 0.82, 1.0) * vShim * (0.25 + 1.6 * band + 0.5 * rim);
+`
+
+const FOG_BUILDINGS = `
+#ifdef USE_FOG
+  float fogFactorB = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogFactorB * 0.5);
+#endif
 `
 
 export interface BuildingMaterial {
@@ -116,7 +124,9 @@ export function createBuildingMaterial(): BuildingMaterial {
       .replace('#include <common>', `#include <common>\n${FRAG_DECL}`)
       .replace('#include <color_fragment>', FRAG_COLOR)
       .replace('#include <emissivemap_fragment>', FRAG_EMIT)
+      // Half the scene fog on buildings: far neighborhoods keep their hue (the depth cue stays).
+      .replace('#include <fog_fragment>', FOG_BUILDINGS)
   }
-  material.customProgramCacheKey = () => 'skyline-buildings-v1'
+  material.customProgramCacheKey = () => 'skyline-buildings-v6'
   return { material, time }
 }

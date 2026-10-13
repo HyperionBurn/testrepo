@@ -64,6 +64,11 @@ function stopRecorder(rec: MediaRecorder): Promise<void> {
   })
 }
 
+/** The pixel ratio the city renders at when nothing degrades it: the same cap as the canvas starts with. */
+function fullDpr(): number {
+  return Math.min(2, window.devicePixelRatio || 1)
+}
+
 /** Frames the whole city, grabs it and composes the stats card. Saves the PNG and copies it. */
 export async function takeSnapshot(): Promise<void> {
   const s = useSky.getState()
@@ -110,6 +115,8 @@ export async function recordFlyover(): Promise<void> {
   let rec: MediaRecorder | undefined
   try {
     s.setCapture('flyover')
+    // Full pixel ratio for the recording, even after a performance drop lowered it (restored in finally).
+    s.setCaptureDpr(fullDpr())
     stream = canvas.captureStream(60)
     const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 })
     rec = recorder
@@ -135,6 +142,7 @@ export async function recordFlyover(): Promise<void> {
     if (rec && rec.state !== 'inactive') rec.stop()
     stream?.getTracks().forEach((t) => t.stop())
     const done = useSky.getState()
+    done.setCaptureDpr(null)
     done.setCapture(null)
     done.requestFrame()
     useCapture.setState({ busy: null, progress: 0 })
