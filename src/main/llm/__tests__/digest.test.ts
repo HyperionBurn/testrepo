@@ -163,3 +163,103 @@ describe('LocalLlm.digest', () => {
     expect(late[0].model).toBe('heuristic')
   })
 })
+
+describe('LocalLlm.digest requestId', () => {
+  let dir: string
+  let llm: LocalLlm | undefined
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'skyline-digest-id-'))
+    writeFileSync(path.join(dir, DEFAULT_FILE), 'placeholder')
+  })
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    await llm?.dispose()
+    llm = undefined
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('echoes the request id on the model digest', async () => {
+    const { events, agents } = scenario()
+    llm = new LocalLlm({ modelsDir: dir, digestWaitMs: 5000 })
+    vi.spyOn(llm as unknown as GenerateSeam, 'generate').mockResolvedValue('- Ran the tests.')
+
+    const d = await llm.digest(events, agents, 'acme', 'req-1')
+
+    expect(d.model).toBe(DEFAULT_MODEL_URI)
+    expect(d.requestId).toBe('req-1')
+  })
+
+  it('echoes the request id on the heuristic answer for an empty window', async () => {
+    llm = new LocalLlm({ modelsDir: dir, digestWaitMs: 5000 })
+
+    const d = await llm.digest([], [], 'acme', 'req-empty')
+
+    expect(d.model).toBe('heuristic')
+    expect(d.requestId).toBe('req-empty')
+  })
+
+  it('echoes the request id on the still-thinking answer and on its late digest', async () => {
+    const { events, agents } = scenario()
+    llm = new LocalLlm({ modelsDir: dir, digestWaitMs: 20 })
+    let finish: (text: string) => void = () => undefined
+    vi.spyOn(llm as unknown as GenerateSeam, 'generate').mockImplementation(
+      () => new Promise<string>((resolve) => (finish = resolve))
+    )
+    const late: Digest[] = []
+    llm.on('digest', (d: Digest) => late.push(d))
+
+    const quick = await llm.digest(events, agents, 'acme', 'req-slow')
+    expect(quick.model).toBe(STILL_THINKING_MODEL)
+    expect(quick.requestId).toBe('req-slow')
+
+    finish('- Edited `src/a.ts` twice.')
+    await waitFor(() => late.length === 1)
+    expect(late[0].requestId).toBe('req-slow')
+  })
+
+  it('echoes the fallback id on a late digest after generation fails', async () => {
+    const { events, agents } = scenario()
+    llm = new LocalLlm({ modelsDir: dir, digestWaitMs: 20 })
+    let fail: (err: Error) => void = () => undefined
+    vi.spyOn(llm as unknown as GenerateSeam, 'generate').mockImplementation(
+      () => new Promise<string>((_resolve, reject) => (fail = reject))
+    )
+    const late: Digest[] = []
+    llm.on('digest', (d: Digest) => late.push(d))
+
+    await llm.digest(events, agents, 'acme', 'req-failed')
+    fail(new Error('boom'))
+    await waitFor(() => late.length === 1)
+
+    expect(late[0].model).toBe('heuristic')
+    expect(late[0].requestId).toBe('req-failed')
+  })
+
+  it('keeps each late digest on its own request when two requests overlap', async () => {
+    const { events, agents } = scenario()
+    llm = new LocalLlm({ modelsDir: dir, digestWaitMs: 20 })
+    // Requests run one after another on the shared sequence, so each generate() call gets its own finisher.
+    const finishers: Array<(text: string) => void> = []
+    vi.spyOn(llm as unknown as GenerateSeam, 'generate').mockImplementation(
+      () => new Promise<string>((resolve) => finishers.push(resolve))
+    )
+    const late: Digest[] = []
+    llm.on('digest', (d: Digest) => late.push(d))
+
+    const a = await llm.digest(events, agents, 'acme', 'req-a')
+    const b = await llm.digest(events, agents, 'acme', 'req-b')
+    expect([a.requestId, b.requestId]).toEqual(['req-a', 'req-b'])
+
+    await waitFor(() => finishers.length === 1)
+    finishers[0]('- first')
+    await waitFor(() => late.length === 1)
+    await waitFor(() => finishers.length === 2)
+    finishers[1]('- second')
+    await waitFor(() => late.length === 2)
+
+    expect(late.map((d) => d.requestId)).toEqual(['req-a', 'req-b'])
+    expect(late[1].text).toContain('- second')
+  })
+})

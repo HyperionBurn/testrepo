@@ -127,10 +127,17 @@ export class LocalLlm extends EventEmitter {
    * If the model has not answered within digestWaitMs, returns the heuristic digest at once
    * (model 'heuristic (LLM still thinking)') and emits 'digest' with the model's digest when it is
    * ready. Never throws and never waits for a download.
+   * `requestId` is echoed on every Digest this call produces, the immediate one and the late 'digest'
+   * event, so a caller can tell which request a late digest answers.
    */
-  async digest(events: AgentEvent[], agents: AgentInfo[], repoName: string): Promise<Digest> {
+  async digest(events: AgentEvent[], agents: AgentInfo[], repoName: string, requestId?: string): Promise<Digest> {
     const now = Date.now()
-    const fallback = (model = 'heuristic'): Digest => ({ generatedAt: now, text: heuristicDigest(events, agents, now), model })
+    const fallback = (model = 'heuristic'): Digest => ({
+      generatedAt: now,
+      text: heuristicDigest(events, agents, now),
+      model,
+      requestId
+    })
     if (this.disposed || this.downloading || events.length === 0 || !this.modelOnDisk()) return fallback()
 
     const work = this.enqueue(async (): Promise<Digest> => {
@@ -140,7 +147,7 @@ export class LocalLlm extends EventEmitter {
         const narrative = await this.generate(msgs.system, msgs.user, DIGEST_MAX_TOKENS)
         if (!narrative) return fallback()
         const text = `${digestTotalsLine(events, agents, now)}\n\n${narrative}`
-        return { generatedAt: now, text, model: this.modelUri }
+        return { generatedAt: now, text, model: this.modelUri, requestId }
       } catch (err) {
         this.emit('generation-error', errorMessage(err))
         return fallback()

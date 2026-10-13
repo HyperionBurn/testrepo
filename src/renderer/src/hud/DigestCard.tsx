@@ -7,6 +7,7 @@ import { useUi } from '../lib/ui'
 import { clockTime, duration } from '../lib/format'
 import { attempt } from '../lib/actions'
 import { errorText, toast } from '../lib/toast'
+import { isCurrentDigest } from '../lib/digest'
 import { Markdown } from '../lib/markdown'
 import { Overlay } from './Overlay'
 import { IconDownload, IconRefresh, IconSparkle, IconX } from './icons'
@@ -137,17 +138,21 @@ export function DigestCard() {
   const [llm, setLlm] = useState<LlmStatus | null>(null)
   const [regen, setRegen] = useState(0)
   const revisions = useRef(0)
+  // Id of the latest digest request whose immediate answer is on screen. A pushed digest must match it.
+  const latestRequest = useRef<string | undefined>(undefined)
 
   const close = () => useUi.getState().closeDigest()
 
   // The heuristic (or, on regenerate, the first answer) for this window.
   useEffect(() => {
     let alive = true
+    latestRequest.current = undefined
     setState({ status: 'loading' })
     window.skyline
       .digest(since)
       .then((digest) => {
         if (!alive) return
+        latestRequest.current = digest.requestId
         revisions.current += 1
         setState({ status: 'ready', digest, revision: revisions.current, leaving: null })
       })
@@ -162,6 +167,8 @@ export function DigestCard() {
   // The local model's digest, when it finishes after the heuristic was shown. It replaces the heuristic in place.
   useEffect(() => {
     const off = window.skyline.on('digest', (refined) => {
+      // A late answer to an older request (e.g. before Regenerate) must not overwrite the newest digest.
+      if (!isCurrentDigest(refined, latestRequest.current)) return
       setState((prev) => {
         if (prev.status !== 'ready' || !isStillThinking(prev.digest.model)) return prev
         revisions.current += 1

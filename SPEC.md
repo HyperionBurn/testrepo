@@ -103,7 +103,7 @@ export interface AgentEvent {
 export interface GitCommit { hash: string; ts: number; author: string; subject: string;
   files: { path: string; added: number; removed: number }[]; }
 
-export interface Digest { generatedAt: number; text: string; model: string; }
+export interface Digest { generatedAt: number; text: string; model: string; requestId?: string; }
 
 export interface DispatchRequest { kind: 'claude-code' | 'codex'; prompt: string; worktree: boolean; }
 
@@ -122,15 +122,28 @@ export interface SkylineAPI {
   stopAgent(agentId: string): Promise<void>;                  // only for dispatched ones
   llmStatus(): Promise<LlmStatus>;
   llmDownload(): Promise<void>;
-  digest(sinceTs: number): Promise<Digest>;                   // summary of agent events since ts
+  digest(sinceTs: number): Promise<Digest>;                   // summary of agent events since ts; heuristic first, model later (see Digest)
   explain(path: string): Promise<string>;                     // LLM explanation of a file
   getSettings(): Promise<Settings>;
   on(channel: 'agents', cb: (a: AgentInfo[]) => void): () => void;
   on(channel: 'event', cb: (e: AgentEvent) => void): () => void;
   on(channel: 'repo', cb: (s: RepoSnapshot) => void): () => void;   // after fs changes (debounced 500ms)
   on(channel: 'llm', cb: (s: LlmStatus) => void): () => void;
+  on(channel: 'digest', cb: (d: Digest) => void): () => void;       // late model digest; requestId says which digest() call it answers
+  on(channel: 'history', cb: (c: GitCommit[]) => void): () => void; // after HEAD, a ref or the reflog moved (debounced 1s)
+  saveCapture(data: Uint8Array, suggestedName: string): Promise<string | null>; // capture feature (lands with the capture work): save dialog; resolves with the saved path, null if cancelled
   window: { minimize(): void; maximize(): void; close(): void };
   platform: string;
+  autoOpen(): Promise<string | null>;                         // repo path from the SKYLINE_OPEN env var, if set; the renderer opens it at start
+  listSessions(): Promise<RecentSession[]>;                   // agent sessions from the last 7 days, all repos, newest first, max 200
+}
+
+/** A recent agent session found on this machine, for the Welcome screen. */
+export interface RecentSession {
+  kind: AgentKind;
+  cwd: string;              // a Skyline worktree (.skyline/worktrees/<id>) is reported as its main checkout
+  lastActiveAt: number;     // modification time of the session file, ms
+  id: string;               // Claude Code or Codex session id
 }
 ```
 
@@ -154,12 +167,44 @@ export interface SkylineAPI {
 - Tail files incrementally (remember byte offsets), poll every 1 s + fs.watch hints.
 - Only sessions whose cwd is the repo root or inside it count.
 
+## Dispatch (`src/main/agents/dispatch.ts`)
+- Starts a Claude Code (`claude`) or Codex (`codex`) CLI run in the repo root, or in a fresh git
+  worktree at `.skyline/worktrees/<shortid>` on branch `skyline/<shortid>` when `worktree` is set.
+- Output never goes to a pipe. Each run appends to `dispatch-<shortid>.log` in
+  `os.tmpdir()/skyline-logs` (the log directory is an option for tests). The child gets the log
+  file as stdout and stderr, so it keeps running after Skyline quits. Processes are detached and
+  unref'd. Skyline reads the log only to find the session id (first 64 KB) and, for a failed start,
+  the first 2000 characters of the error text.
+- Claude Code: resolves with its real session id once the log shows it (polled every 200 ms). After
+  20 s it resolves with `pending-<shortid>`, and keeps polling the log at 1 Hz for up to 5 minutes
+  to link the real id.
+- Codex: resolves as soon as the process spawns with `codex-<shortid>`. Its own session id is
+  registered as an alias once its rollout file appears (polled every 500 ms, up to 60 s).
+- `stopAgent` accepts either id. Stopping kills the whole process tree: SIGTERM to the process group,
+  then SIGKILL after 3 s on POSIX; `taskkill /T /F` on Windows.
+- Limits: prompts up to 100,000 characters, and about 7,000 on Windows (the cmd.exe command-line limit).
+
+## Digest (`src/main/llm/local.ts`, `src/renderer/src/hud/DigestCard.tsx`)
+- `digest(sinceTs)` returns at once with a summary of agent events since the timestamp. The totals
+  line (time span, agents, edits, files, commands, cost) is always computed, never generated.
+- While the local model is on disk and free, it writes the bullets. If it has not finished within
+  **20 s** (`DIGEST_WAIT_MS`), the caller gets the heuristic digest now, with model
+  `heuristic (LLM still thinking)`. When the model finishes, the main process emits the refined
+  digest on the `digest` channel and the card replaces the heuristic in place. If generation fails,
+  the late event carries the heuristic with model `heuristic`, so the card drops "still thinking".
+- Each `digest` call gets a fresh `requestId` (UUID, made in the IPC handler). It is echoed on the
+  immediate answer and on the late `digest` event. The card accepts a pushed digest only when its
+  `requestId` matches the latest request, so a late answer to an earlier request, such as one from
+  before Regenerate, never overwrites a newer digest.
+
 ## Pricing (`src/shared/pricing.ts`) per 1M tokens (input / output / cache read / cache write)
 opus 15/75/1.5/18.75 · sonnet 3/15/0.3/3.75 · haiku 1/5/0.1/1.25 · gpt-5/codex 1.25/10/0.125/0 · default sonnet. Match by substring of model id.
 
 ## City layout (`src/shared/layout.ts`, pure + tested)
-- Squarified treemap of the directory tree, weight = max(loc, 8). Districts recursively
-  nested with 1.2-unit streets (padding) per depth; buildings inset 15% (plazas between).
+- Squarified treemap of the directory tree, weight = max(loc, 8). Streets separate sibling
+  districts: 2.4 units between top-level districts (depth 1), 1.2 units between nested ones
+  (depth 2+). Each district plate is its cell minus half a street per side, so sibling plates
+  are a full street apart. Buildings inset 15% (plazas between).
 - Building height h = 0.6 + 2.2·log2(1 + loc/20). Footprint from treemap cell.
 - Deterministic: same snapshot → same layout. Sort children by name for stability.
 - Total city ~ 120×120 units regardless of repo size (scale treemap).
@@ -183,4 +228,8 @@ opus 15/75/1.5/18.75 · sonnet 3/15/0.3/3.75 · haiku 1/5/0.1/1.25 · gpt-5/code
   top-center **Command bar** (⌘K/Ctrl+K: jump to file, dispatch agent, digest);
   **Digest card** ("While you were away…").
 - Welcome screen (no repo): city silhouette idling in background, "Open a repository",
-  recent repos, detected agent sessions list ("3 Claude Code sessions found").
+  "Recent agent activity" (one row per working directory from `listSessions`, newest first, max 6),
+  and "Recent" (saved repos). A repo already in "Recent agent activity" is not repeated under
+  "Recent"; comparison ignores trailing slashes, separator style and drive-letter case. Each
+  Recent row shows its full parent folder with the separators kept and a middle ellipsis
+  (`/home/user`, `C:\dev`), via `lib/recent.ts`.

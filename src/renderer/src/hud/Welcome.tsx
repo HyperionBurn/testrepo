@@ -2,8 +2,9 @@
 import { useEffect, useState } from 'react'
 import type { AgentKind, RecentSession } from '@shared/types'
 import { useUi } from '../lib/ui'
-import { basename, dirname, middleEllipsis, relativeTime, shortPath } from '../lib/format'
+import { basename, middleEllipsis, relativeTime } from '../lib/format'
 import { groupByRepo, type RepoActivity } from '../lib/activity'
+import { parentLabel, recentWithoutActivity } from '../lib/recent'
 import { loadSettings, openRepoPath, pickAndOpen } from '../lib/actions'
 import { toast } from '../lib/toast'
 import { IconDots, IconFolder, IconSparkle, IconTerminal, SkylineGlyph } from './icons'
@@ -86,7 +87,9 @@ export function Welcome() {
     else toast.info('Demo city unavailable', 'This build does not include a sample repository.')
   }
 
-  const hasRecent = recent !== null && recent.length > 0
+  // Repos already listed under "Recent agent activity" are not repeated here.
+  const recentRows = recent === null ? [] : recentWithoutActivity(recent, activity ?? [])
+  const hasRecent = recentRows.length > 0
   const hasActivity = activity !== null && activity.length > 0
   const twoColumns = hasRecent || hasActivity
 
@@ -122,11 +125,11 @@ export function Welcome() {
           <div className="welcome__aside">
             {hasActivity && activity && <RecentActivity rows={activity} />}
 
-            {hasRecent && recent && (
+            {hasRecent && (
               <div className="recent">
                 <div className="t-caption">Recent</div>
                 <div className="recent__list">
-                  {recent.slice(0, 6).map((p) => (
+                  {recentRows.slice(0, 6).map((p) => (
                     <button key={p} className="row-btn" onClick={() => void openRepoPath(p)} title={p}>
                       <IconFolder size={14} />
                       <span style={{ minWidth: 0, flex: 1 }}>
@@ -134,7 +137,7 @@ export function Welcome() {
                           {basename(p)}
                         </span>
                         <span className="ellipsis faint" style={{ display: 'block', fontSize: 11 }}>
-                          {shortPath(dirname(p)) || '/'}
+                          {parentLabel(p)}
                         </span>
                       </span>
                     </button>
