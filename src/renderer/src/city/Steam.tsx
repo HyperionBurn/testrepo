@@ -15,6 +15,7 @@ declare global {
   interface Window {
     /** Steam emitters of the current city (tests and debugging). */
     __skylineSteamEmitters?: () => SteamEmitter[];
+    __skylineSteamDebug?: (o: { scale?: number; alpha?: number; depthTest?: boolean }) => void;
   }
 }
 
@@ -26,6 +27,7 @@ const STEAM_VERT = `
 uniform float uTime;
 uniform vec2 uWind;
 uniform float uPx;
+uniform float uScale;
 attribute float aSeed;
 attribute float aPhase;
 attribute float aRoof;
@@ -45,7 +47,7 @@ void main() {
   float size = mix(0.7, 3.0, t) * (aRoof > 0.5 ? 0.9 : 1.2);
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
-  gl_PointSize = clamp(size * uPx * 1000.0 / -mv.z, 1.0, 128.0);
+  gl_PointSize = clamp(size * uScale * uPx * 1000.0 / -mv.z, 1.0, 256.0);
   vA = pow(sin(3.14159265 * t), 1.5) * 0.5;
   vT = t;
   vY = p.y;
@@ -53,6 +55,7 @@ void main() {
 
 const STEAM_FRAG = `
 uniform float uIntensity;
+uniform float uAlpha;
 varying float vA;
 varying float vT;
 varying float vY;
@@ -66,12 +69,12 @@ void main() {
   vec3 cool = vec3(0.7, 0.78, 1.0);
   vec3 col = mix(warm, cool, smoothstep(2.0, 14.0, vY));
   col *= 0.6 + 0.4 * (1.0 - vT);
-  gl_FragColor = vec4(col * soft * vA * uIntensity, 1.0);
+  gl_FragColor = vec4(col * soft * vA * uIntensity * uAlpha, 1.0);
 }`
 
 export interface SteamBuild {
   points: Points;
-  uniforms: { uTime: { value: number }; uWind: { value: [number, number] }; uPx: { value: number }; uIntensity: { value: number } };
+  uniforms: { uTime: { value: number }; uWind: { value: [number, number] }; uPx: { value: number }; uIntensity: { value: number }; uScale: { value: number }; uAlpha: { value: number } };
   dispose: () => void;
 }
 
@@ -103,7 +106,9 @@ export function buildSteam(emitters: readonly SteamEmitter[], pixelRatio: number
     uTime: { value: 0 },
     uWind: { value: [WIND[0], WIND[1]] as [number, number] },
     uPx: { value: pixelRatio },
-    uIntensity: { value: 0.85 }
+    uIntensity: { value: 0.85 },
+    uScale: { value: 1 },
+    uAlpha: { value: 1 }
   }
   const mat = new ShaderMaterial({
     uniforms,
@@ -152,6 +157,21 @@ export function Steam() {
       if (window.__skylineSteamEmitters) delete window.__skylineSteamEmitters
     }
   }, [emitters])
+
+  // Debug knobs for the steam check (window.__skylineSteamDebug): size scale, alpha, depth test.
+  useEffect(() => {
+    if (!built) return
+    window.__skylineSteamDebug = (o) => {
+      if (o.scale !== undefined) built.uniforms.uScale.value = o.scale
+      if (o.alpha !== undefined) built.uniforms.uAlpha.value = o.alpha
+      const mat = built.points.material as ShaderMaterial
+      if (o.depthTest !== undefined) mat.depthTest = o.depthTest
+      mat.needsUpdate = true
+    }
+    return () => {
+      if (window.__skylineSteamDebug) delete window.__skylineSteamDebug
+    }
+  }, [built])
 
   if (!built) return null
   return <primitive object={built.points} />
