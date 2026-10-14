@@ -274,6 +274,18 @@ progress pill shows while it runs. `Esc` cancels a flyover, and other keys are i
   exposes as `flyoverSeconds` to shorten or lengthen the flyover. The Capture menu label still says 10 s. Both are
   unset in normal runs.
 
+## City v2 (`src/renderer/src/city/`)
+The full design brief is [docs/EPIC_CITY.md](docs/EPIC_CITY.md). v2 replaces the procedural boxes with CC0 Kenney
+models (`scripts/import-kenney.mjs` generates `city/assets/manifest.ts`), and adds roads and street lamps, live
+traffic, atmosphere, drone FX and the Director camera. Each model is one InstancedMesh, and the triangle total stays
+under 3M (`modelPicker.ts`). The module map is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#renderer-v2).
+- **Keys:** `V` toggles the Director camera (needs an open repo; off with reduced motion). Every other key is unchanged.
+- **Director:** `shots.ts` picks among reveal, orbit, follow, crane and flythrough, and `Director.tsx` runs it. Camera
+  input makes it step aside for `PAUSE_S`, and it runs only after `IDLE_S` (3 s) without input.
+- **Test hooks** (window globals, present in every build): `__skylineStats()` (draw calls, triangles, geometries,
+  textures), `__skylineFxStep(seconds)`, `__skylineTrafficStep(seconds)`, `__skylineDirectorStep(dt)`. They let the
+  e2e harness fast-forward animation, since software GL runs at about 1 fps.
+
 ## Design — "Liquid Glass"
 - The 3D city fills the window edge-to-edge; all UI floats above it as glass.
 - Night-time city: deep navy→black gradient sky, faint fog, ground with subtle grid,

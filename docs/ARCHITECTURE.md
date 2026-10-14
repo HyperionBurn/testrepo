@@ -145,6 +145,22 @@ Implemented in `src/shared/layout.ts`. It is pure and deterministic: the same sn
 6. **Height.** Layout height is `h = 0.6 + 2.2 · log2(1 + loc / 20)`. The renderer stretches it for display in `src/renderer/src/city/geom.ts` with `towerHeight()`, which is `0.6 + 2.4 · (h − 0.6)^1.15`, capped at 60 units.
 7. **Size.** The whole city is a 120 × 120 unit square (`CITY_SIZE`), whatever the repo size.
 
+## Renderer v2
+
+The v2 city replaces the procedural boxes with real models. The design brief is [EPIC_CITY.md](EPIC_CITY.md). Everything is in `src/renderer/src/city/`.
+
+- **Assets.** `node scripts/import-kenney.mjs <dir>` takes the Kenney City Kit packs, keeps the curated GLBs, strips their external texture references, remaps the UVs into one stacked colormap atlas, measures each model, and writes `city/assets/models/` and `city/assets/textures/colormap.png`. It also generates `city/assets/manifest.ts`, which the loader reads. Re-run the script rather than editing the manifest.
+- **One InstancedMesh per model.** `BuildingField.ts` puts every file in the InstancedMesh for its model id. `modelPicker.ts` picks the model and scale for each file. Per-building state (color, glow, selection, height) lives in slot-indexed arrays that the field writes each frame.
+- **Windows.** `assets/windows.ts` groups the window triangles of each model into panes and writes one id per vertex, `aWin`. `buildingShader.ts` lights each pane as a whole, lit or dark, and flickers it on the same clock as the sky.
+- **Picking.** `picking.ts` tests a ray against a uniform XZ grid of building boxes. It walks the cells the ray crosses (Amanatides-Woo DDA) and slab-tests each box in those cells. `THREE.Raycaster` never runs over the instances.
+- **Streets.** `streets.ts` plans the road network as plain data. It rasterizes the free space between district plates into street cells, then autotiles each cell with the road piece whose openings match its neighbors. `Roads.tsx` instances the result and adds the street lamps.
+- **Traffic.** `lanes.ts` derives one lane per direction from the same layout, offset from each centerline. `Traffic.tsx` draws every car as one additive light streak on a shared buffer.
+- **FX.** `fx/` holds the agent effects. `fx/pools.ts` keeps one `Points` object for all particles and one instanced mesh for all ground rings, so the FX layer costs a fixed number of draw calls. `fx/core.ts` relays store events to the FX systems, and `FxStage.tsx` steps them once per frame.
+- **Director.** `shots.ts` is pure. It chooses the next shot (orbit, follow, crane, reveal or flythrough) and computes the camera pose. `Director.tsx` runs it every frame, and `CameraRig.tsx` applies the view.
+- **Budget.** `modelPicker.ts` keeps the triangle total under `TRI_BUDGET` (3,000,000). Over budget, the smallest files by LOC are degraded first.
+
+Test hooks: `window.__skylineStats()` (calls, triangles, geometries, textures), `window.__skylineFxStep(seconds)`, `window.__skylineTrafficStep(seconds)` and `window.__skylineDirectorStep(dt)`. Verify changes in the built app, because packaged builds load from `file://`.
+
 ## Pricing
 
 Prices live in `src/shared/pricing.ts` as `MODEL_PRICES`, in USD per 1M tokens for input, output, cache read and cache write.

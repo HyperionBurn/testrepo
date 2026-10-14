@@ -207,6 +207,43 @@ What I would like from this sub: suggestions for small models that summarize age
 
 ---
 
+## Epic City v2 launch angle
+
+The v2 city (real Kenney models, lit windows, traffic, drone FX, a Director camera) gives a second story: the city films itself. Use it as a follow-up to Draft A, or as the lead for the Director-cam video. Attach `epic-overview.png` or `epic-night-reveal.png` from `docs/screenshots/`.
+
+### Tweet draft V2-1: the visual
+
+Your repo, as a city of real 3D buildings.
+
+Windows light up. Cars drive the streets. Every agent is a drone that flies to the file it edits, with cost popping up as it works.
+
+Press V and the Director camera films it for you.
+
+Skyline is free and 100% local. [LINK]
+
+### Tweet draft V2-2: the hook
+
+Put a camera operator on your codebase.
+
+Skyline's Director camera cuts between reveal, follow, crane and flythrough shots while your agents build the city below. Hands off the mouse, it still gets the shot.
+
+Free, open source, 100% local. [LINK]
+
+### 20-second shot list: Director-cam flyover
+
+**Setup:** open a repo with at least two agents running (or the demo city), wait until the city has been busy for a minute, then press `V`. Reduced motion must be off, or the Director does not run. Keep hands off the mouse and keyboard: the Director runs only after 3 seconds without camera input, and steps aside while you touch the camera. The Director picks its own shots, weighted by what is happening, and holds each for 6 to 12 seconds, so a 20-second clip holds two or three cuts. Do a dry run first, and keep the take whose cuts land on the action. Record at 1920 × 1080, 60 fps, with captions in the lower third as in the demo video.
+
+| Time | Shot kind | Camera | On-screen caption |
+|---|---|---|---|
+| 0:00–0:05 | Reveal | Opens on the framed city from altitude and descends slowly over the districts. | "Your repo, as a city." |
+| 0:05–0:11 | Follow | Tracks one drone as it flies to a file under edit. Cost popups rise from it, and the building under it pulses. | "Every agent is a drone." |
+| 0:11–0:16 | Crane | Rises past a construction site with a tower crane and welding sparks, then settles. | "Edits build in real time." |
+| 0:16–0:20 | Flythrough or Orbit | Skims between two drones along the streets, with traffic streaks and lamps, then holds on the skyline under the aurora. | "Skyline. Free. Open source. 100% local." |
+
+If a shot kind does not come up in the take (crane and follow need active edits, and flythrough needs two agents), keep the take that has the most motion and put the caption on the next cut.
+
+---
+
 ## 5. Press kit
 
 ### 50 words
