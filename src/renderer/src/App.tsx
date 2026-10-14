@@ -29,8 +29,10 @@ class CityBoundary extends Component<{ children: ReactNode }, { failed: boolean 
     return { failed: true }
   }
 
-  componentDidCatch(error: unknown): void {
-    console.error('[skyline] city failed to render', error)
+  componentDidCatch(error: unknown, info: { componentStack?: string | null }): void {
+    // Log the full stack and the component stack, so a failed scene is obvious in the console.
+    const stack = error instanceof Error ? error.stack ?? error.message : String(error)
+    console.error(`[skyline] city failed to render\n${stack}\n--- component stack ---${info.componentStack ?? ''}`)
   }
 
   render(): ReactNode {

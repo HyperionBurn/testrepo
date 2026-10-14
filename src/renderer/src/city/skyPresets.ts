@@ -63,8 +63,8 @@ export const PRESETS: Record<TimeOfDay, SkyPreset> = {
       mid: '#0a0a0f',
       teal: '#1c1a1c',
       horizon: NIGHT_GLOW,
-      bandA: '#f0a050',
-      bandB: '#c8703a',
+      bandA: '#ffb050',
+      bandB: '#e0803a',
       below: '#0a0806',
       wisp: '#8a5a34',
       fog: NIGHT_BROWN,
@@ -75,7 +75,7 @@ export const PRESETS: Record<TimeOfDay, SkyPreset> = {
       hemiGround: '#100c08',
       key: '#ffd9a8'
     },
-    levels: { star: 0.12, moon: 0.2, band: 1.3, wisps: 0.4, sheets: 0.5, hazeAmt: 1, scatter: 0.9, hemi: 0.35, keyI: 0.45 }
+    levels: { star: 0.12, moon: 0.2, band: 1.9, wisps: 0.4, sheets: 0.5, hazeAmt: 1, scatter: 0.9, hemi: 0.35, keyI: 0.45 }
   },
   // Dawn: cool lilac overhead, peach at the horizon.
   dawn: {

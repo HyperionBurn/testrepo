@@ -91,14 +91,14 @@ void main() {
 }`
 
 const FOG_BANKS = [
-  { y: 0.8, scale: 0.0075, speed: 0.012, alpha: 0.2, seed: 1.3 },
-  { y: 1.8, scale: 0.0055, speed: -0.008, alpha: 0.14, seed: 7.9 },
-  { y: 3.0, scale: 0.0105, speed: 0.02, alpha: 0.1, seed: 14.2 }
+  { y: 0.8, scale: 0.0075, speed: 0.012, alpha: 0.09, seed: 1.3 },
+  { y: 1.8, scale: 0.0055, speed: -0.008, alpha: 0.06, seed: 7.9 },
+  { y: 3.0, scale: 0.0105, speed: 0.02, alpha: 0.04, seed: 14.2 }
 ] as const
 
 const MID_BANKS = [
-  { y: 22, scale: 0.0045, speed: 0.006, alpha: 0.2, seed: 3.7 },
-  { y: 40, scale: 0.0032, speed: -0.004, alpha: 0.14, seed: 11.4 }
+  { y: 22, scale: 0.0045, speed: 0.006, alpha: 0.07, seed: 3.7 },
+  { y: 40, scale: 0.0032, speed: -0.004, alpha: 0.05, seed: 11.4 }
 ] as const
 
 function makeGroundHaze(b: (typeof FOG_BANKS)[number]): ShaderMaterial {
