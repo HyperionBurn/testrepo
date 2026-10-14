@@ -25,6 +25,7 @@ attribute float aSeed;
 // ---------- models ----------
 
 const MODEL_VARYINGS = `
+varying float vWin;
 varying vec3 vLang;
 varying vec3 vGlowCol;
 varying float vGlow;
@@ -36,7 +37,7 @@ varying vec3 vWorldPos;
 varying vec3 vObjN;
 `
 
-const MODEL_VERT_DECL = `${INSTANCE_ATTRS}${MODEL_VARYINGS}`
+const MODEL_VERT_DECL = `${INSTANCE_ATTRS}attribute float aWin;\n${MODEL_VARYINGS}`
 
 const MODEL_VERT_BODY = `
 #include <begin_vertex>
@@ -44,6 +45,7 @@ vec4 instP = instanceMatrix * vec4(position, 1.0);
 vWorldPos = instP.xyz;
 vec3 instScale = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz), length(instanceMatrix[2].xyz));
 vObjN = normalize(normal / max(instScale, vec3(1e-4)));
+vWin = aWin;
 vLang = aLang;
 vGlowCol = aGlowColor;
 vGlow = aGlow;
@@ -61,6 +63,12 @@ float hash13(vec3 p) {
   p += dot(p, p.zyx + 31.32);
   return fract((p.x + p.y) * p.z);
 }
+float hash11(float p) {
+  p = fract(p * 0.1031);
+  p *= p + 33.33;
+  p *= p + p;
+  return fract(p);
+}
 `
 
 // Walls: the atlas luminance tinted by the colour mode, so a neighbourhood reads as one colour. Darker at the base.
@@ -75,31 +83,33 @@ body *= mix(0.55, 1.0, smoothstep(0.0, max(vSize.y, 1.0) * 0.7, vWorldPos.y));
 body *= 1.0 + 0.3 * roof;
 body += vec3(0.04, 0.05, 0.07) * hov;
 body = mix(body, vGlowCol * 0.5, clamp(vGlow, 0.0, 1.0) * 0.8);
-diffuseColor.rgb = body;
+// Window panes are flat dark glass (no atlas pattern inside a pane); the lit state is in the emission.
+float isWinC = step(0.0005, vWin);
+diffuseColor.rgb = mix(body, vec3(0.015, 0.02, 0.035), isWinC);
 `
 
-// Emission: windows are a MASK of the emissive atlas (window region, not its colour pattern). Each window cell is
-// independently lit (~75%) or dark, with slow per-window changes. Brightness stays under the bloom threshold.
+// Emission. A window is one pane (aWin, one id per pane): lit or dark as a whole, flat coloured, with a slow per-window
+// on/off change. Walls get the edge glow, roof highlight, heat, selection and the construction scanline.
 const MODEL_FRAG_EMIT = `
-vec3 winTex = texture2D(emissiveMap, vEmissiveMapUv).rgb;
-float winMask = smoothstep(0.25, 0.55, max(winTex.r, max(winTex.g, winTex.b)));
+float isWin = step(0.0005, vWin);
 float roofE = smoothstep(0.82, 0.97, vObjN.y);
 float hovE = step(0.25, vSel) * (1.0 - step(0.75, vSel));
 float isSel = step(0.75, vSel);
-// Window cells in world space (one cell per window); each cell is lit or dark, changing slowly.
-vec3 wcell = floor(vWorldPos * vec3(4.0, 3.2, 4.0) + vSeed * 17.0);
-float slow = uTime * 0.05 + vSeed * 9.0;
-float ph = fract(slow);
-float hA = hash13(wcell + floor(slow));
-float hB = hash13(wcell + floor(slow) + 1.0);
-float lit = step(0.25, mix(hA, hB, smoothstep(0.0, 1.0, ph)));
-float warm = step(0.55, hash13(wcell.zyx + 3.0 + vSeed * 5.0));
-vec3 winCol = mix(vec3(1.0, 0.74, 0.4), vec3(0.55, 0.85, 1.0), warm);
-vec3 emit = winMask * winCol * lit * 0.5;
 float ndv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
 float fres = pow(1.0 - ndv, 3.0);
-emit += vLang * fres * (0.25 + 0.5 * (1.0 - roofE)) * 0.6;
-emit += mix(vLang, vec3(1.0), 0.35) * roofE * 0.12;
+// Windows: per-pane id, 75% lit, slow flicker between two hash states.
+float h0 = hash11(vWin * 1000.0 + vSeed * 91.0);
+float slowT = uTime * 0.04 + h0 * 7.0;
+float ha = hash11(vWin * 1000.0 + vSeed * 91.0 + floor(slowT));
+float hb = hash11(vWin * 1000.0 + vSeed * 91.0 + floor(slowT) + 1.0);
+float hv = mix(ha, hb, smoothstep(0.0, 1.0, fract(slowT)));
+float lit = step(hv, 0.75);
+float wt = hash11(vWin * 517.0 + vSeed * 13.0);
+vec3 winCol = mix(vec3(1.0, 0.74, 0.40), vec3(0.55, 0.85, 1.0), step(0.6, wt));
+vec3 winEmit = winCol * 0.55 * lit + vec3(0.03, 0.05, 0.08) * fres * (1.0 - lit);
+// Walls: luminous edges in the neighbourhood colour, a faint roof highlight.
+vec3 wallEmit = vLang * fres * (0.25 + 0.5 * (1.0 - roofE)) * 0.6 + mix(vLang, vec3(1.0), 0.35) * roofE * 0.12;
+vec3 emit = mix(wallEmit, winEmit, isWin);
 float pulse = 0.8 + 0.2 * sin(uTime * 5.0 + vSeed * 6.2831);
 emit += vGlowCol * clamp(vGlow, 0.0, 1.0) * pulse * (1.6 + 2.2 * fres + 0.8 * roofE);
 emit += vec3(0.8, 0.94, 1.0) * isSel * (0.5 + 2.2 * fres);
