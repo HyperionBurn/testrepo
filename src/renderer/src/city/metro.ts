@@ -330,13 +330,13 @@ export function buildMetro(opts: MetroOptions): MetroPlan {
     seed,
     cores,
     ...sets,
-    lines: buildLines(R, E),
+    lines: buildLines(R, E, seed),
     boxCount: sets.tiered.count + sets.spired.count + sets.mid.count + sets.far.count + sets.edge.count
   }
 }
 
 /** Avenue and cross-street light lines as ground quads, cut into short segments and kept off rivers and the square. */
-function buildLines(R: number, E: number): LineSet {
+function buildLines(R: number, E: number, seed: number): LineSet {
   const xz: number[] = []
   const across: number[] = []
   const along: number[] = []
@@ -361,6 +361,7 @@ function buildLines(R: number, E: number): LineSet {
     const [nx, nz] = avenue ? [U_X, U_Z] : [V_X, V_Z]
     const hw = avenue ? 2.2 : 1.4
     const b = avenue ? 1 : 0.9
+    const lineSeed = hash3(Math.round(fixed * 10), avenue ? 1 : 2, 0, seed ^ 0x5eed)
     for (let s = -R; s < R; s += LIGHT_SEG) {
       const s1 = Math.min(s + LIGHT_SEG, R)
       const mid = (s + s1) / 2
@@ -370,7 +371,7 @@ function buildLines(R: number, E: number): LineSet {
       if (touchesRiver(mx - 3, mx + 3)) continue
       const [ax, az] = avenue ? uvToXZ(fixed, s) : uvToXZ(s, fixed)
       const [bx, bz] = avenue ? uvToXZ(fixed, s1) : uvToXZ(s1, fixed)
-      quad(ax, az, bx, bz, nx, nz, hw, b, hash3(Math.round(mid), Math.round(fixed), avenue ? 1 : 2, 0x5eed))
+      quad(ax, az, bx, bz, nx, nz, hw, b, lineSeed)
     }
   }
   for (let i = Math.floor(-R / AVENUE_PITCH) - 1; i <= Math.ceil(R / AVENUE_PITCH) + 1; i++) emitLine(i * AVENUE_PITCH, true)

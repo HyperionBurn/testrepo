@@ -62,7 +62,7 @@ void main() {
   float blotch = smoothstep(0.55, 0.9, vnoise2(p * 0.006));
   col *= 0.85 + 0.3 * speck;
   col = mix(col, col * 0.55, blotch * 0.6);
-  col += vec3(0.05, 0.035, 0.02) * smoothstep(120.0, 900.0, length(p)) * speck * 0.05;
+  col += vec3(0.012, 0.009, 0.006) * speck;
   float dist = length(vW - cameraPosition);
   float fog = 1.0 - exp(-pow(dist * uDensity, 2.0));
   gl_FragColor = vec4(mix(col, uFog, fog), 1.0);
@@ -71,7 +71,7 @@ void main() {
 export function Ground() {
   const material = useMemo(() => new ShaderMaterial({
     uniforms: {
-      uBase: { value: new Color('#03050b') },
+      uBase: { value: new Color('#020307') },
       uGrid: { value: new Color('#3d6bff') },
       uFog: { value: new Color(FOG_HEX) },
       uDensity: { value: HAZE_DENSITY }

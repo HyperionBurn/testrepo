@@ -262,7 +262,8 @@ const FACADE_FRAG_EMIT = `
 float ndv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
 float fres = pow(1.0 - ndv, 3.0);
 float isRoof = step(3.5, vFaceId);
-vec3 win = mix(fWinCol * 1.4 * fWinArea * fLitA * 1.5, fWinCol * 1.4 * fMask * fLit, fDetail) * (1.0 - isRoof);
+// Far away a facade averages to its lit share: a low warm glow over dark walls (about R4's far-band mean), not a flat wash.
+vec3 win = mix(fWinCol * 0.4 * fWinArea * fLitA, fWinCol * 1.2 * fMask * fLit, fDetail) * (1.0 - isRoof);
 vec3 sky = mix(vec3(0.02, 0.03, 0.06), vec3(0.16, 0.13, 0.14), fres);
 vec3 emit = win + sky * fres * fMask * (1.0 - fLit) * fDetail * 0.8 * (1.0 - isRoof);
 // Shopfront band: storefront light and small signs.

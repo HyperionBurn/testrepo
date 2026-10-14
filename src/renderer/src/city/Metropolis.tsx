@@ -133,9 +133,10 @@ void main() {
   // Pixels per window cell: where a cell is smaller than a pixel, the lit share averages out to its mean.
   vec2 fw = fwidth(g);
   float px = max(fw.x, fw.y);
-  float aa = 1.0 - smoothstep(0.15, 0.9, px);
-  float emitW = (lit * inten * pane * aa + (1.0 - aa) * 0.4 * 1.0 * 0.336) * uWinGain;
-  vec3 col = wall + winCol * emitW;
+  float aa = 1.0 - smoothstep(0.08, 0.45, px);
+  // Far away the lit panes average out to one warm tone, so no per-window colour can alias into speckle.
+  vec3 avgCol = vec3(0.95, 0.72, 0.44) * 0.4 * 0.336;
+  vec3 col = wall + winCol * (lit * inten * pane * aa * uWinGain) + avgCol * (1.0 - aa) * uWinGain;
   // Tall towers: a lit crown band near the top, and a faint warm rim where the face turns away.
   float tall = smoothstep(60.0, 180.0, vHgt);
   float crown = smoothstep(0.93, 0.995, vUnitY) * tall * (1.0 - 0.5 * abs(n.y));

@@ -23,8 +23,8 @@ void main() {
   float r = length(vUv - 0.5) * 2.0;
   float d = r * ${RADIUS.toFixed(1)};
   // A soft sodium pool over ~120 units, a long low tail, and a fade to zero well before the plane's edge.
-  float pool = exp(-d / 120.0) * 0.6 + exp(-d / 420.0) * 0.14;
-  float fall = 1.0 - smoothstep(700.0, 1400.0, d);
+  float pool = exp(-d / 120.0) * 0.6 + exp(-d / 260.0) * 0.06;
+  float fall = 1.0 - smoothstep(420.0, 800.0, d);
   vec3 col = uWarm * pool * fall;
   gl_FragColor = vec4(col * uStrength, 1.0);
 }`
