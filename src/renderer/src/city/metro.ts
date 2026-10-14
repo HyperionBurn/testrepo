@@ -310,7 +310,7 @@ export function buildMetro(opts: MetroOptions): MetroPlan {
     // Moat: low next to the repo plate, ramping to full downtown height by ~600 units out.
     const gap = Math.hypot(Math.max(0, Math.abs(x) - opts.half), Math.max(0, Math.abs(z) - opts.half))
     const ramp = smooth(150, 600, gap)
-    const cap = 0.4 * repoTop + (1e4 - 0.4 * repoTop) * ramp
+    const cap = 0.4 * repoTop + (260 - 0.4 * repoTop) * ramp
     const h = Math.min(raw, cap)
     const r = Math.hypot(x, z)
     const rec: Rec = { x, z, w: c.w, h, seed: hash3(c.i, c.j, c.k, seed ^ 0x2f) }
