@@ -441,7 +441,7 @@ export function Metropolis() {
   useEffect(() => {
     // The far average of the windows is the warm carpet of light: stronger at night, moderate at blue hour.
     facade.uniforms.uNight!.value = night ? 1.6 : 1.0
-    facade.uniforms.uWinGain!.value = night ? 2.8 : 1.7
+    facade.uniforms.uWinGain!.value = night ? 2.6 : 1.15
     lines.mat.uniforms.uNight!.value = night ? 1.6 : 1.0
   }, [night, facade, lines])
 

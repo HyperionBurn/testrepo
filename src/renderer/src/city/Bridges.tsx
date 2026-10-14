@@ -17,7 +17,7 @@ import { BRIDGES, type BridgeSpec } from './metro'
 
 const SUN = [0.4, 0.8, 0.3] as const
 /** Dark warm stone (brownstone and granite at night), not blue. */
-const STONE = new Color('#4b3c2f')
+const STONE = new Color('#33281f')
 const STEEL = new Color('#1d1d22')
 const ARCH = new Color('#0a0705')
 const UPLIGHT = [1.0, 0.62, 0.3] as const
@@ -74,7 +74,7 @@ function addUplight(g: BufferGeometry, b: BridgeSpec): void {
     const y = pos.getY(i)
     const fromWater = Math.exp(-(y + 3) / 8)
     const fromDeck = y >= b.deckY ? Math.exp(-(y - b.deckY) / 14) : 0
-    const k = 0.42 * Math.max(fromWater, fromDeck)
+    const k = 0.3 * Math.max(fromWater, fromDeck)
     col.setXYZ(i, col.getX(i) + UPLIGHT[0] * k, col.getY(i) + UPLIGHT[1] * k, col.getZ(i) + UPLIGHT[2] * k)
   }
   col.needsUpdate = true
