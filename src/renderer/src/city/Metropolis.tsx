@@ -135,12 +135,12 @@ void main() {
   float px = max(fw.x, fw.y);
   float aa = 1.0 - smoothstep(0.08, 0.45, px);
   // Far away the lit panes average out to one warm tone, so no per-window colour can alias into speckle.
-  vec3 avgCol = vec3(0.95, 0.72, 0.44) * 0.4 * 0.336;
+  vec3 avgCol = vec3(0.95, 0.72, 0.44) * 0.13;
   vec3 col = wall + winCol * (lit * inten * pane * aa * uWinGain) + avgCol * (1.0 - aa) * uWinGain;
   // Tall towers: a lit crown band near the top, and a faint warm rim where the face turns away.
   float tall = smoothstep(60.0, 180.0, vHgt);
   float crown = smoothstep(0.93, 0.995, vUnitY) * tall * (1.0 - 0.5 * abs(n.y));
-  col += vec3(1.0, 0.7, 0.4) * crown * 0.45;
+  col += vec3(1.0, 0.7, 0.4) * crown * 0.6;
   vec3 V = normalize(cameraPosition - vW);
   float rim = pow(1.0 - abs(dot(normalize(vWN), V)), 3.0);
   col += vec3(0.5, 0.28, 0.12) * rim * 0.1;

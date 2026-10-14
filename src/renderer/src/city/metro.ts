@@ -147,23 +147,37 @@ const smooth = (a: number, b: number, x: number): number => {
   return t * t * (3 - 2 * t)
 }
 
-/** Height and spire flag of a lot centred at (x, z). rnd is the lot's own random draw in [0, 1). */
-export function lotHeight(x: number, z: number, cores: readonly Core[], seed: number, rnd: number): { h: number; spire: boolean } {
+export interface LotHeight { h: number; spire: boolean; needle: boolean }
+
+/**
+ * Height of a lot centred at (x, z). Mid-rise plateaus (6 to 14 floors) gated by a thresholded low-frequency fbm and the
+ * downtown cores, so the skyline has real gaps and clusters rather than one smooth envelope. Rare slender needles (about
+ * 2 % of lots in the cores) rise 2 to 3 times the core height. Each lot varies by +-35 %. No radial envelope.
+ */
+export function lotHeight(x: number, z: number, cores: readonly Core[], seed: number, rnd: number): LotHeight {
   let coreI = 0
   for (const c of cores) {
     const d2 = (x - c.x) * (x - c.x) + (z - c.z) * (z - c.z)
     coreI += c.strength * Math.exp(-d2 / (c.r * c.r))
   }
   coreI = Math.min(coreI, 1.6)
-  const r = Math.hypot(x, z)
-  const n = fbm2(x / 150, z / 150, seed ^ 0x51)
-  const edge = 1 - 0.78 * smooth(650, 1650, r)
-  const mid = (8 + 36 * n * n * 1.2) * edge
-  // Cores add the spiky towers: most lots stay mid-rise, a few reach the top of the range.
-  let h = mid * (1 - 0.45 * Math.min(coreI, 1)) + coreI * (55 + 210 * Math.pow(rnd, 2.2))
-  const spire = coreI > 0.5 && hash3(Math.round(x * 4), Math.round(z * 4), 9, seed) < 0.4
-  if (spire) h *= 1.12
-  return { h: Math.max(3, h), spire }
+  // Clusters: a thresholded fbm (real gaps where it is low) plus the cores.
+  const f = fbm2(x / 260, z / 260, seed ^ 0x77)
+  const clusters = smooth(0.5, 0.68, f)
+  const mask = Math.min(1, Math.max(clusters, coreI * 1.1))
+  const n = fbm2(x / 90, z / 90, seed ^ 0x51)
+  const low = 5 + 8 * n
+  const mid = 14 + 28 * n
+  let h = low + (mid - low) * mask
+  // Spiky downtown towers in the cores.
+  h += Math.min(coreI, 1) * (30 + 160 * Math.pow(rnd, 2.2))
+  // Rare needles: a slender tall tower in a dense core.
+  const needle = mask > 0.7 && hash3(Math.round(x * 4), Math.round(z * 4), 11, seed) < 0.02
+  if (needle) h = (150 + 120 * rnd) * (1 + 0.5 * coreI)
+  // Per-lot variation, +-35 %.
+  h *= 0.65 + 0.7 * rnd
+  const spire = needle
+  return { h: Math.max(3, Math.min(h, 380)), spire, needle }
 }
 
 // ---- The plan --------------------------------------------------------------------------------------------
@@ -306,14 +320,14 @@ export function buildMetro(opts: MetroOptions): MetroPlan {
     if (kept >= maxLots) break
     if (hash3(c.i, c.j, c.k, seed ^ 0x77) >= keepP) continue
     const [x, z] = uvToXZ(c.cu, c.cv)
-    const { h: raw, spire } = lotHeight(x, z, cores, seed, hash3(c.i, c.j, c.k, seed ^ 0x13))
-    // Moat: low next to the repo plate, ramping to full downtown height by ~600 units out.
+    const lh = lotHeight(x, z, cores, seed, hash3(c.i, c.j, c.k, seed ^ 0x13))
+    // Hard local cap next to the repo plate only; beyond 150 units there is no envelope at all.
     const gap = Math.hypot(Math.max(0, Math.abs(x) - opts.half), Math.max(0, Math.abs(z) - opts.half))
-    const ramp = smooth(150, 600, gap)
-    const cap = 0.4 * repoTop + (260 - 0.4 * repoTop) * ramp
-    const h = Math.min(raw, cap)
+    const h = gap < 150 ? Math.min(lh.h, 0.4 * repoTop) : lh.h
+    const spire = lh.spire
+    const widthScale = lh.needle ? 0.55 : 1
     const r = Math.hypot(x, z)
-    const rec: Rec = { x, z, w: c.w, h, seed: hash3(c.i, c.j, c.k, seed ^ 0x2f) }
+    const rec: Rec = { x, z, w: c.w * widthScale, h, seed: hash3(c.i, c.j, c.k, seed ^ 0x2f) }
     const band = r < NEAR_RADIUS ? (spire ? 'spired' : 'tiered') : r < MID_RADIUS ? 'mid' : r < FAR_RADIUS ? 'far' : 'edge'
     bands[band].push(rec)
     kept++
