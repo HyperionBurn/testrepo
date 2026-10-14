@@ -25,7 +25,7 @@ export const AVENUE_WIDTH = 9
 export const STREET_PITCH = 22
 export const STREET_WIDTH = 5
 export const LOT_DEPTH = 8
-export const EXCLUSION_MARGIN = 14
+export const EXCLUSION_MARGIN = 25
 export const RIVER_INNER = 250
 export const RIVER_OUTER = 700
 /** Upper bound for the instanced boxes of one metropolis. */
@@ -212,6 +212,8 @@ export interface MetroOptions {
   name: string
   /** Half the side of the repo city's square (layoutBounds size / 2). */
   half: number
+  /** Tallest building of the repo city: near the plate the metropolis stays under 40 % of it. */
+  repoTop?: number
   radius?: number
   maxLots?: number
 }
@@ -249,6 +251,7 @@ export function buildMetro(opts: MetroOptions): MetroPlan {
   const seed = hashName(opts.name)
   const R = opts.radius ?? METRO_RADIUS
   const maxLots = opts.maxLots ?? MAX_LOTS
+  const repoTop = Math.max(10, opts.repoTop ?? 40)
   const E = opts.half + EXCLUSION_MARGIN
   const cores = metroCores(seed)
   const keepOut = BRIDGES.map(bridgeSpan)
@@ -303,7 +306,12 @@ export function buildMetro(opts: MetroOptions): MetroPlan {
     if (kept >= maxLots) break
     if (hash3(c.i, c.j, c.k, seed ^ 0x77) >= keepP) continue
     const [x, z] = uvToXZ(c.cu, c.cv)
-    const { h, spire } = lotHeight(x, z, cores, seed, hash3(c.i, c.j, c.k, seed ^ 0x13))
+    const { h: raw, spire } = lotHeight(x, z, cores, seed, hash3(c.i, c.j, c.k, seed ^ 0x13))
+    // Moat: low next to the repo plate, ramping to full downtown height by ~600 units out.
+    const gap = Math.hypot(Math.max(0, Math.abs(x) - opts.half), Math.max(0, Math.abs(z) - opts.half))
+    const ramp = smooth(150, 600, gap)
+    const cap = 0.4 * repoTop + (1e4 - 0.4 * repoTop) * ramp
+    const h = Math.min(raw, cap)
     const r = Math.hypot(x, z)
     const rec: Rec = { x, z, w: c.w, h, seed: hash3(c.i, c.j, c.k, seed ^ 0x2f) }
     const band = r < NEAR_RADIUS ? (spire ? 'spired' : 'tiered') : r < MID_RADIUS ? 'mid' : r < FAR_RADIUS ? 'far' : 'edge'
@@ -351,8 +359,8 @@ function buildLines(R: number, E: number): LineSet {
   /** One full line: an avenue at constant u (runs along v) or a cross street at constant v (runs along u). */
   const emitLine = (fixed: number, avenue: boolean) => {
     const [nx, nz] = avenue ? [U_X, U_Z] : [V_X, V_Z]
-    const hw = avenue ? 2.2 : 1.1
-    const b = avenue ? 1 : 0.55
+    const hw = avenue ? 2.2 : 1.4
+    const b = avenue ? 1 : 0.9
     for (let s = -R; s < R; s += LIGHT_SEG) {
       const s1 = Math.min(s + LIGHT_SEG, R)
       const mid = (s + s1) / 2

@@ -121,18 +121,20 @@ void main() {
   float mt = h21(vec2(vSeed * 41.0, 3.0));
   vec3 wall = mix(vec3(0.060, 0.038, 0.030), vec3(0.046, 0.048, 0.054), step(0.42, mt));
   wall = mix(wall, vec3(0.018, 0.024, 0.040), step(0.84, mt));
-  // Lit panes: about 42 % of windows, whole floors lit in runs now and then, mostly warm light.
+  // Lit panes: about 40 % of windows, whole floors lit in runs now and then. Each lit pane gets its own intensity (+-30 %)
+  // and colour: warm yellow-white most of the time, some orange, cool white and a few TV-blue.
   float r = h21(id + sd);
   float run = step(0.86, h21(vec2(id.y + 3.0, sd)));
-  float lit = max(step(r, 0.45), run * step(h21(id * 1.3 + sd + 7.0), 0.7));
-  float cool = step(0.9, h21(id * 1.7 + sd + 19.0));
-  vec3 winCol = mix(vec3(1.0, 0.64, 0.30), vec3(0.72, 0.9, 1.0), cool);
+  float lit = max(step(r, 0.40), run * step(h21(id * 1.3 + sd + 7.0), 0.7));
+  float kind = h21(id * 1.7 + sd + 19.0);
+  vec3 winCol = kind < 0.65 ? vec3(1.0, 0.85, 0.63) : kind < 0.80 ? vec3(1.0, 0.55, 0.22) : kind < 0.95 ? vec3(0.86, 0.91, 1.0) : vec3(0.35, 0.55, 1.0);
+  float inten = 0.7 + 0.6 * h21(id * 3.1 + sd + 5.0);
   float pane = step(0.2, f.x) * step(f.x, 0.8) * step(0.24, f.y) * step(f.y, 0.8);
   // Pixels per window cell: where a cell is smaller than a pixel, the lit share averages out to its mean.
   vec2 fw = fwidth(g);
   float px = max(fw.x, fw.y);
-  float aa = 1.0 - smoothstep(0.22, 0.7, px);
-  float emitW = (lit * pane * aa + (1.0 - aa) * 0.45 * 0.36) * uWinGain;
+  float aa = 1.0 - smoothstep(0.15, 0.9, px);
+  float emitW = (lit * inten * pane * aa + (1.0 - aa) * 0.4 * 1.0 * 0.336) * uWinGain;
   vec3 col = wall + winCol * emitW;
   // Tall towers: a lit crown band near the top, and a faint warm rim where the face turns away.
   float tall = smoothstep(60.0, 180.0, vHgt);
@@ -250,7 +252,8 @@ function buildMetropolis(plan: MetroPlan, facade: ShaderMaterial): Built {
 export function Metropolis() {
   const name = useSky((s) => s.repo?.name ?? 'skyline')
   const size = useSky((s) => s.layout?.size ?? CITY_SIZE)
-  const plan = useMemo(() => buildMetro({ name, half: size / 2 }), [name, size])
+  const repoTop = useSky((s) => (s.layout?.buildings ?? []).reduce((m, b) => Math.max(m, b.h), 0))
+  const plan = useMemo(() => buildMetro({ name, half: size / 2, repoTop }), [name, size, repoTop])
 
   const facade = useMemo(() => new ShaderMaterial({
     uniforms: {

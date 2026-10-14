@@ -85,6 +85,13 @@ describe('metro plan', () => {
     }
   })
 
+  it('keeps the metropolis low next to the repo plate', () => {
+    const gapTo = (x: number, z: number) => Math.hypot(Math.max(0, Math.abs(x) - HALF), Math.max(0, Math.abs(z) - HALF))
+    const near = allLots(plan).filter((l) => gapTo(l.x, l.z) < 150)
+    expect(near.length).toBeGreaterThan(0)
+    for (const l of near) expect(l.h).toBeLessThanOrEqual(0.4 * 40 + 1e-3)
+  })
+
   it('has spiky downtown cores and low edges', () => {
     const all = allLots(plan)
     const heightsWhere = (f: (r: number) => boolean) => all.filter((l) => f(Math.hypot(l.x, l.z))).map((l) => l.h)

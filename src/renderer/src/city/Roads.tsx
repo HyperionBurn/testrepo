@@ -142,7 +142,7 @@ void main() {
   if (s.r < 0.5) discard;
   vec4 g = texture2D(uGlow, uv);
   float k = g.b * 1.25 + g.r * 0.8 + g.a * 0.55 + g.g * 0.9;
-  vec3 warm = vec3(1.0, 0.69, 0.34);
+  vec3 warm = vec3(1.0, 0.42, 0.12);
   gl_FragColor = vec4(warm * k * uFade, 1.0);
 }`
 
