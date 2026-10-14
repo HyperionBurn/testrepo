@@ -108,6 +108,7 @@ describe('model choice within a class', () => {
       const p = pickPlacement(input, rank, false)
       if (p.stretch < MIN_STRETCH || p.stretch > MAX_STRETCH) outside++
     }
+    // Detailed-model fallbacks only; low-detail blocks are allowed a wider range by design.
     // Squat footprints (height near the base, wide) can need a flatter model than any in the set; the fallback is the closest.
     expect(outside / inputs.length).toBeLessThan(0.1)
   })

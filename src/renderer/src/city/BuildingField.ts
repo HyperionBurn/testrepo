@@ -331,9 +331,9 @@ export class BuildingField {
   }
 
   /** Advances the height springs, shimmer, ghost sinking, color transition and layer crossfade. dt in seconds. */
-  step(dt: number): void {
+  step(dt: number, realDt: number = dt): void {
     if (this.colorT < 1) this.stepColor(dt)
-    if (this.fadeT < 1) this.stepFade(dt)
+    if (this.fadeT < 1) this.stepFade(realDt)
     const slots = this.slots
     for (let i = 0; i < slots.length; i++) {
       const s = slots[i]!
@@ -663,7 +663,7 @@ export class BuildingField {
 /** A geometry for one batch that shares the model's vertex buffers (the model stays cached and unchanged). */
 function shareGeometry(src: BufferGeometry): BufferGeometry {
   const g = new BufferGeometry()
-  for (const name of ['position', 'normal', 'uv']) {
+  for (const name of ['position', 'normal', 'uv', 'aWin']) {
     const a = src.getAttribute(name)
     if (a) g.setAttribute(name, a)
   }

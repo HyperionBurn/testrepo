@@ -57,6 +57,7 @@ export function Buildings() {
   const plan = useSky((s) => s.colorPlan)
 
   const fieldRef = useRef<BuildingField | null>(null)
+  const lastFrameMs = useRef<number | null>(null)
   const mats = useMemo(() => createBuildingMaterials(), [])
   const [, bump] = useReducer((n: number) => n + 1, 0)
   const prevRef = useRef<BuildingField | null>(null)
@@ -159,7 +160,10 @@ export function Buildings() {
     mats.time.value = state.clock.elapsedTime
     const s = useSky.getState()
     const now = s.mode === 'replay' && s.replayTs !== null ? s.replayTs : Date.now()
-    f.step(Math.min(dt, 0.05))
+    const now0 = performance.now()
+    const realDt = lastFrameMs.current === null ? dt : (now0 - lastFrameMs.current) / 1000
+    lastFrameMs.current = now0
+    f.step(Math.min(dt, 0.05), realDt)
     f.applyHeat(now, resolveHeat(s), colorOf)
     f.commit()
   })

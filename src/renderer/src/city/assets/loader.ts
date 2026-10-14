@@ -2,6 +2,8 @@ import { BufferGeometry, Float32BufferAttribute, Mesh, NearestFilter, Object3D, 
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { COLORMAP_URL, getModel, type ModelDef } from './manifest'
+import { isWindowTexel, loadColormapPixels } from './colormap'
+import { tagWindows } from './windows'
 
 export interface LoadedModel {
   def: ModelDef
@@ -85,9 +87,17 @@ export function loadModel(id: string): Promise<LoadedModel> {
   let p = models.get(id)
   if (!p) {
     p = (async () => {
-      const [bytes, map] = await Promise.all([fetchBytes(def.url), loadColormap()])
+      const [bytes, map, px] = await Promise.all([fetchBytes(def.url), loadColormap(), loadColormapPixels()])
       const scene = await parseGlbBytes(bytes)
-      return { def, geometry: normaliseScene(scene), map }
+      const geometry = normaliseScene(scene)
+      // Each window pane gets its own id (aWin), from the colormap texel under its UVs.
+      tagWindows(geometry, (u, v) => {
+        const x = Math.min(px.width - 1, Math.max(0, Math.floor(u * px.width)))
+        const y = Math.min(px.height - 1, Math.max(0, Math.floor(v * px.height)))
+        const i = (y * px.width + x) * 4
+        return isWindowTexel(px.data[i]!, px.data[i + 1]!, px.data[i + 2]!)
+      })
+      return { def, geometry, map }
     })()
     models.set(id, p)
     p.catch(() => models.delete(id))

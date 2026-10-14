@@ -47,7 +47,7 @@ function buildGroup(plan: RoadPlan, models: ReadonlyMap<string, LoadedModel>, in
   const any = models.values().next().value as LoadedModel | undefined
   const map = any?.map ?? null
   const road = new MeshStandardMaterial({
-    map, color: '#ffffff', roughness: 0.35, metalness: 0.1,
+    map, color: '#c4cad8', roughness: 0.35, metalness: 0.1,
     transparent: true, opacity: instant ? 1 : 0,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2
   })
@@ -57,7 +57,7 @@ function buildGroup(plan: RoadPlan, models: ReadonlyMap<string, LoadedModel>, in
   })
   const glowTex = glowTexture()
   const glow = new PointsMaterial({
-    map: glowTex, size: 5, sizeAttenuation: true, vertexColors: true,
+    map: glowTex, size: 7, sizeAttenuation: true, vertexColors: true,
     transparent: true, opacity: instant ? 1 : 0, depthWrite: false,
     blending: AdditiveBlending, toneMapped: false
   })

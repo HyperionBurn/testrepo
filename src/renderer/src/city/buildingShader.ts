@@ -78,26 +78,28 @@ body = mix(body, vGlowCol * 0.5, clamp(vGlow, 0.0, 1.0) * 0.8);
 diffuseColor.rgb = body;
 `
 
-// Emission: windows from the emissive atlas, gated per window cell; then fresnel edges, roofs, heat, selection, scanline.
+// Emission: windows are a MASK of the emissive atlas (window region, not its colour pattern). Each window cell is
+// independently lit (~75%) or dark, with slow per-window changes. Brightness stays under the bloom threshold.
 const MODEL_FRAG_EMIT = `
 vec3 winTex = texture2D(emissiveMap, vEmissiveMapUv).rgb;
+float winMask = smoothstep(0.25, 0.55, max(winTex.r, max(winTex.g, winTex.b)));
 float roofE = smoothstep(0.82, 0.97, vObjN.y);
 float hovE = step(0.25, vSel) * (1.0 - step(0.75, vSel));
 float isSel = step(0.75, vSel);
-// Window cells in world space; each cell is lit, dark, or slowly changing between the two.
+// Window cells in world space (one cell per window); each cell is lit or dark, changing slowly.
 vec3 wcell = floor(vWorldPos * vec3(4.0, 3.2, 4.0) + vSeed * 17.0);
 float slow = uTime * 0.05 + vSeed * 9.0;
 float ph = fract(slow);
 float hA = hash13(wcell + floor(slow));
 float hB = hash13(wcell + floor(slow) + 1.0);
-float lit = smoothstep(0.3, 0.42, mix(hA, hB, smoothstep(0.0, 1.0, ph)));
+float lit = step(0.25, mix(hA, hB, smoothstep(0.0, 1.0, ph)));
 float warm = step(0.55, hash13(wcell.zyx + 3.0 + vSeed * 5.0));
-vec3 winCol = mix(vec3(1.0, 0.74, 0.4), vec3(0.6, 0.86, 1.0), warm);
-vec3 emit = winTex * winCol * lit * 1.5;
+vec3 winCol = mix(vec3(1.0, 0.74, 0.4), vec3(0.55, 0.85, 1.0), warm);
+vec3 emit = winMask * winCol * lit * 0.5;
 float ndv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
 float fres = pow(1.0 - ndv, 3.0);
-emit += vLang * fres * (0.45 + 1.1 * (1.0 - roofE)) * 0.9;
-emit += mix(vLang, vec3(1.0), 0.35) * roofE * 0.16;
+emit += vLang * fres * (0.25 + 0.5 * (1.0 - roofE)) * 0.6;
+emit += mix(vLang, vec3(1.0), 0.35) * roofE * 0.12;
 float pulse = 0.8 + 0.2 * sin(uTime * 5.0 + vSeed * 6.2831);
 emit += vGlowCol * clamp(vGlow, 0.0, 1.0) * pulse * (1.6 + 2.2 * fres + 0.8 * roofE);
 emit += vec3(0.8, 0.94, 1.0) * isSel * (0.5 + 2.2 * fres);

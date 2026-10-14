@@ -184,7 +184,8 @@ export function pickPlacement(input: PickInput, rank: LocRank, big: boolean): Pl
     const p = pickFrom(input, CANDIDATES.get(cls) ?? [])
     if (p) return p
   }
-  return pickFrom(input, DETAILED) ?? closestAny(input)
+  // Big repos may use a stretched low-detail block for a squat file; small repos keep a detailed model.
+  return pickFrom(input, DETAILED) ?? (big ? pickFrom(input, LOW_DETAIL) : null) ?? closestAny(input)
 }
 
 /**

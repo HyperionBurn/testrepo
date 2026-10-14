@@ -6,6 +6,7 @@ import type { NeighborhoodIndex } from '@shared/layout'
 import { useSky } from '../state/store'
 import { visCenter, visHeight } from './geom'
 import { getDroneVec } from './registry'
+import { requestGrab } from './capture'
 import { FS_AGENT } from './data'
 import type { FramePose, Vec3 } from './framing'
 import {
@@ -236,10 +237,13 @@ declare global {
   interface Window {
     __skylineDirectorStep?: (dt: number) => void;
     __skylineDirector?: () => unknown;
+    __skylineDirectorGrab?: () => Promise<HTMLCanvasElement>;
   }
 }
 
 if (typeof window !== 'undefined') {
   window.__skylineDirectorStep = (dt: number) => director.step(dt)
   window.__skylineDirector = () => director.debug()
+  // Test hook: a copy of the city canvas taken inside the next frame, whatever the camera is doing (no capture state).
+  window.__skylineDirectorGrab = () => requestGrab(window.devicePixelRatio || 1)
 }

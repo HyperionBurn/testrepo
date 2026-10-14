@@ -62,3 +62,27 @@ export function loadEmissiveAtlas(): Promise<Texture> {
   }
   return emissive
 }
+
+export interface ColormapPixels { width: number; height: number; data: Uint8ClampedArray }
+let pixels: Promise<ColormapPixels> | null = null
+
+/** RGBA pixels of the colormap (row 0 = top of the image, the same rows UV v indexes with flipY=false). Cached. */
+export function loadColormapPixels(): Promise<ColormapPixels> {
+  if (!pixels) {
+    pixels = loadColormap().then((cm) => {
+      const img = cm.image as HTMLImageElement | ImageBitmap
+      const canvas = document.createElement('canvas')
+      canvas.width = img.width
+      canvas.height = img.height
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })
+      if (!ctx) throw new Error('2d canvas unavailable for colormap pixels')
+      ctx.drawImage(img, 0, 0)
+      const d = ctx.getImageData(0, 0, img.width, img.height)
+      return { width: img.width, height: img.height, data: d.data }
+    }).catch((err) => {
+      pixels = null
+      throw err
+    })
+  }
+  return pixels
+}
