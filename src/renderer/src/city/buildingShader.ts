@@ -193,11 +193,11 @@ float fhash(vec3 p) {
 const FACADE_FRAG_COLOR = `
 #include <color_fragment>
 float pal = floor(fhash(vec3(vSeed * 91.7, 3.1, 7.7)) * 5.0);
-vec3 wall = pal < 0.5 ? vec3(0.20, 0.11, 0.08)
-  : pal < 1.5 ? vec3(0.17, 0.17, 0.18)
-  : pal < 2.5 ? vec3(0.30, 0.285, 0.255)
-  : pal < 3.5 ? vec3(0.035, 0.04, 0.05)
-  : vec3(0.085, 0.11, 0.15);
+vec3 wall = pal < 0.5 ? vec3(0.10, 0.055, 0.04)
+  : pal < 1.5 ? vec3(0.085, 0.085, 0.09)
+  : pal < 2.5 ? vec3(0.14, 0.135, 0.12)
+  : pal < 3.5 ? vec3(0.02, 0.022, 0.028)
+  : vec3(0.045, 0.06, 0.085);
 float glassy = step(2.5, pal);
 wall *= 0.86 + 0.28 * fhash(vec3(vSeed * 11.3, 1.0, 2.0));
 // Brick and concrete grain, faded out where a texel is smaller than a pixel.
@@ -238,8 +238,10 @@ fLitA = litA + 0.04;
 
 // Warm 2400–3200 K 70 %, cool white 20 %, TV blue 10 %.
 float wc = fhash(vec3(cell * 1.3, vSeed * 2.7 + 4.0));
-vec3 warm = mix(vec3(1.0, 0.64, 0.28), vec3(1.0, 0.77, 0.45), fhash(vec3(cell, 9.0 + vSeed)));
-vec3 winCol = wc < 0.7 ? warm : (wc < 0.9 ? vec3(0.84, 0.92, 1.0) : vec3(0.36, 0.62, 1.0));
+// Mostly warm yellow-white, then cool white and a few TV blues; each pane varies +-30 %.
+vec3 warm = mix(vec3(1.0, 0.85, 0.63), vec3(1.0, 0.76, 0.48), fhash(vec3(cell, 9.0 + vSeed)));
+vec3 winCol = wc < 0.72 ? warm : (wc < 0.92 ? vec3(0.86, 0.91, 1.0) : vec3(0.35, 0.6, 1.0));
+winCol *= 0.7 + 0.6 * fhash(vec3(cell * 2.1, vSeed * 4.4 + 2.0));
 fWinCol = mix(winCol, vLang, 0.5 * uTint);
 
 vec3 glass = mix(vec3(0.012, 0.016, 0.026), vec3(0.03, 0.04, 0.07), glassy);
@@ -250,7 +252,7 @@ col = mix(col, col * (0.6 + vLang * 1.6), 0.35 * uTint);
 float sfY = 1.0 - smoothstep(0.30, 0.34, vY);
 col = mix(col, vec3(0.02, 0.018, 0.016), sfY * 0.8);
 // Roofs are dark tar.
-col = vFaceId > 3.5 ? vec3(0.04, 0.04, 0.045) : col;
+col = vFaceId > 3.5 ? vec3(0.022, 0.022, 0.025) : col;
 diffuseColor.rgb = col;
 `
 
@@ -260,9 +262,9 @@ const FACADE_FRAG_EMIT = `
 float ndv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
 float fres = pow(1.0 - ndv, 3.0);
 float isRoof = step(3.5, vFaceId);
-vec3 win = mix(fWinCol * 1.5 * fWinArea * fLitA, fWinCol * 1.5 * fMask * fLit, fDetail);
+vec3 win = mix(fWinCol * 1.4 * fWinArea * fLitA * 1.5, fWinCol * 1.4 * fMask * fLit, fDetail) * (1.0 - isRoof);
 vec3 sky = mix(vec3(0.02, 0.03, 0.06), vec3(0.16, 0.13, 0.14), fres);
-vec3 emit = win + sky * fres * fMask * (1.0 - fLit) * fDetail * 0.8;
+vec3 emit = win + sky * fres * fMask * (1.0 - fLit) * fDetail * 0.8 * (1.0 - isRoof);
 // Shopfront band: storefront light and small signs.
 float sfE = 1.0 - smoothstep(0.30, 0.34, vY);
 float sfU = fract(vU / 0.5);

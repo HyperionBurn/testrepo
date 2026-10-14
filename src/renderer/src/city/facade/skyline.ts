@@ -6,15 +6,15 @@
 //  - the slenderness cap keeps a thin file a pillar, and the floor keeps a tiny file a small building.
 // geom.visHeight is the one caller that turns this into the rendered height, so every consumer agrees on the top.
 
-export const MID_MIN = 0.9
-export const MID_MAX = 3.2
+export const MID_MIN = 1.6
+export const MID_MAX = 5.5
 /** LOC percentile where the supertalls start: the top 1.5 % of files. */
 export const SUPER_PCT = 0.985
 /** Slenderness: height above the base is at most this many times the narrower footprint side. */
 export const MAX_SLENDER = 7
 const BASE = 0.6
-/** Largest spire, world units: about four times the mid-rise top, as the tallest of New York's towers stand over its roofs. */
-export const SPIRE_MAX = 12
+/** Largest spire, world units: about four times the mid-rise top, so the data city is the hero of the skyline. */
+export const SPIRE_MAX = 22
 
 /** Clamp to [0, 1]. */
 export function clamp01(v: number): number {
