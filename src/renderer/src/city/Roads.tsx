@@ -17,6 +17,7 @@ import { loadModels, type LoadedModel } from './assets'
 import { FOG_DENSITY, FOG_HEX } from './Sky'
 import { buildRoadPlan, lampArmDirection, lampTransform, ROAD_Y, type RoadPlan, type RoadTile } from './streets'
 import { buildRoadRaster, roadTextures } from './roadtex'
+import { buildLanes } from './lanes'
 
 const FADE_MS = 800
 const UP = new Vector3(0, 1, 0)
@@ -31,8 +32,8 @@ const HEAD_Y = 0.628
 
 declare global {
   interface Window {
-    /** Lamp and road plan for tests and the harness. */
-    __skylineRoads?: () => { tiles: RoadTile[]; lights: RoadPlan['lights'] };
+    /** Lamp and road plan, and the signalled junctions, for tests and the harness. */
+    __skylineRoads?: () => { tiles: RoadTile[]; lights: RoadPlan['lights']; junctions: { x: number; z: number }[] };
   }
 }
 
@@ -442,10 +443,13 @@ function ProceduralRoads({ layout, plan }: { layout: CityLayout; plan: RoadPlan 
   useEffect(() => () => built.dispose(), [built])
 
   useEffect(() => {
-    const w = window as unknown as { __skylineRoads?: () => { tiles: RoadTile[]; lights: RoadPlan['lights'] } }
-    w.__skylineRoads = () => ({ tiles: plan.tiles, lights: plan.lights })
+    const w = window as unknown as typeof window
+    const junctions = buildLanes(layout).nodes
+      .filter((n) => n.segments.length >= 3)
+      .map((n) => ({ x: n.x, z: n.z }))
+    w.__skylineRoads = () => ({ tiles: plan.tiles, lights: plan.lights, junctions })
     return () => { delete w.__skylineRoads }
-  }, [plan])
+  }, [layout, plan])
 
   useFrame(({ camera }) => {
     built.surface.uniforms.uCam!.value.copy(camera.position)

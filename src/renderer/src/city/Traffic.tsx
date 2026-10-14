@@ -37,11 +37,6 @@ const MAX_FRAME_STEP = 0.05
 /** Pedestrians advance in these steps, so a long fast-forward keeps them on the sidewalks. */
 const PED_STEP = 1 / 20
 
-/** Whether the road surface and street furniture use the Kenney tiles (stylized) or the procedural road. */
-export function usesStylizedRoads(): boolean {
-  return (useSky.getState() as unknown as { buildingStyle?: string }).buildingStyle === 'stylized'
-}
-
 interface World {
   layout: CityLayout
   net: Network

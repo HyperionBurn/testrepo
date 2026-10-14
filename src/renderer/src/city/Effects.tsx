@@ -57,8 +57,8 @@ export function Effects() {
   const degrade = useDegradeLevel(!capturing)
   const level = capturing ? 0 : degrade
 
+  // The composer owns the effect's passes and releases them on unmount; Effect has no dispose of its own.
   const grade = useMemo(() => new GradeEffect(), [])
-  useEffect(() => () => grade.dispose(), [grade])
 
   const params = useMemo(() => degradeGrade(GRADES[tod], level), [tod, level])
   useEffect(() => {
