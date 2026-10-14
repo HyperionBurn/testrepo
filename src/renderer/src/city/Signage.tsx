@@ -202,7 +202,7 @@ void main() {
     vec2 f = fract(g) - 0.5;
     float on = step(0.45, h21(cell + vec2(vSeed * 71.0, 3.0)));
     float run = step(0.3, h21(vec2(floor(cell.x / 6.0), vSeed * 19.0)));
-    float dot = smoothstep(0.42, 0.28, length(f));
+    float dot = 1.0 - smoothstep(0.28, 0.42, length(f));
     vec3 led = mix(vec3(1.0, 0.72, 0.28), vec3(1.0, 0.25, 0.25), step(0.72, h21(vec2(floor(cell.x / 9.0), 7.0 + vSeed))));
     col = mix(col, led * 2.2, dot * on * run);
   } else {
@@ -275,7 +275,7 @@ void main() {
     vec2 cell = floor(g);
     vec2 f = fract(g) - 0.5;
     float on = step(0.42, h21(cell + vec2(vSeed * 31.0, 1.0)));
-    float dot = smoothstep(0.42, 0.25, length(f));
+    float dot = 1.0 - smoothstep(0.25, 0.42, length(f));
     col = vColor * (dot * on * 2.4 + 0.05);
   }
   gl_FragColor = vec4(col, 1.0);

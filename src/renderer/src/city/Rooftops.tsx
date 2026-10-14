@@ -133,8 +133,8 @@ varying vec3 vCol;
 varying float vBlink;
 void main() {
   float d = length(gl_PointCoord - 0.5) * 2.0;
-  float core = smoothstep(0.35, 0.0, d);
-  float halo = smoothstep(1.0, 0.0, d) * 0.35;
+  float core = 1.0 - smoothstep(0.0, 0.35, d);
+  float halo = (1.0 - smoothstep(0.0, 1.0, d)) * 0.35;
   gl_FragColor = vec4(vCol * (core * 3.0 + halo) * vBlink, 1.0);
 }`
 

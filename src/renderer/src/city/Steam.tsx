@@ -59,7 +59,7 @@ varying float vY;
 void main() {
   vec2 c = gl_PointCoord - 0.5;
   float d = length(c) * 2.0;
-  float soft = smoothstep(1.0, 0.0, d);
+  float soft = 1.0 - smoothstep(0.0, 1.0, d);
   soft *= soft;
   // Warm orange near the street, bluish-white higher up and older puffs dimmer.
   vec3 warm = vec3(1.0, 0.56, 0.24);
