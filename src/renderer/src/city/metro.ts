@@ -394,10 +394,15 @@ function styleFor(c: Cand, h: number, seed: number): [number, number, number, nu
   const pitch = hash3(c.i, c.j, c.key, seed ^ 0x52)
   const pal = Math.floor(hash3(c.i, c.j, c.key, seed ^ 0x53) * 4)
   const kindU = hash3(c.i, c.j, c.key, seed ^ 0x54)
-  let density = 0.12 + 0.5 * a
-  if (a < 0.12) density = 0.03
+  // Far city: 40 to 55 % of windows lit, and about a quarter of the buildings are bright offices (60 to 80 % lit).
+  const far = c.r >= MID_RADIUS
+  let density = far ? 0.4 + 0.15 * a : 0.12 + 0.5 * a
+  if (!far && a < 0.12) density = 0.03
   let kind = 0
-  if (h > 14 && kindU < 0.06) {
+  if (far && kindU < 0.25) {
+    kind = 1
+    density = 0.6 + 0.2 * a
+  } else if (!far && h > 14 && kindU < 0.06) {
     kind = 1
     density = 0.8
   } else if (kindU > 0.92) {
@@ -551,7 +556,7 @@ function buildLines(R: number, half: number, seed: number): LineSet {
     const reach = Math.sqrt(R * R - fixed * fixed)
     const [nx, nz] = avenue ? [U_X, U_Z] : [V_X, V_Z]
     // Thin, continuous lines (a 2 unit avenue, a 1 unit street), flush with the ground.
-    const hw = avenue ? 1.0 : 0.55
+    const hw = avenue ? 1.6 : 0.9
     const b = avenue ? 1 : 0.75
     const lineSeed = hash3(Math.round(fixed * 10), avenue ? 1 : 2, 0, seed ^ 0x5eed)
     const blocked: Array<[number, number]> = []

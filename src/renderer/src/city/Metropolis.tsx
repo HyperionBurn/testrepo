@@ -170,7 +170,7 @@ void main() {
   float run = step(0.9, h21(vec2(cell.y, sd + 3.0))) * step(0.5, dens);
   float lit = max(step(r, dens), run);
   // Office towers: most panes lit.
-  if (kind > 0.5 && kind < 1.5) lit = max(lit, step(0.12, r));
+  if (kind > 0.5 && kind < 1.5) lit = max(lit, step(0.3, r));
 
   // Warm 2400 to 3200 K (#ffd9a0 and #ffc27a) 72 %, cool white 20 %, TV blue 8 %; each pane varies by 30 %.
   float kc = h21(cell * 1.3 + sd + 4.0);
@@ -191,9 +191,9 @@ void main() {
   float vfw = max(vfwv.x, vfwv.y);
   if (n.y > 0.5) {
     vec3 tar = vec3(0.016, 0.016, 0.02) * (0.7 + 0.8 * h21(vec2(vSeed * 13.0, 2.0)));
-    float vent = step(0.8, h21(vcell + vSeed * 31.0)) * (1.0 - smoothstep(0.06, 0.12, length(vf)));
+    float vent = step(0.6, h21(vcell + vSeed * 31.0)) * (1.0 - smoothstep(0.06, 0.12, length(vf)));
     vent *= 1.0 - smoothstep(0.3, 0.6, vfw);
-    col = tar + vec3(1.0, 0.6, 0.3) * vent * 0.55;
+    col = tar + vec3(1.0, 0.6, 0.3) * vent * 0.8;
   }
   // Tall lots: a thin lit crown on about 15 % of them.
   float crownGate = step(0.85, h21(vec2(vSeed * 71.0, 9.0)));
@@ -246,6 +246,8 @@ void main() {
   col += sodium * vBright * 0.035 * uNight * (1.0 - smoothstep(0.3, 1.0, abs(vAcross)));
   float dist = length(vW - cameraPosition);
   float fog = 1.0 - exp(-pow(dist * uFogK, 2.0));
+  // Faint continuous street-light haze across the whole line, on top of the thin core.
+  col += sodium * vBright * 0.06 * (1.0 - smoothstep(0.0, 1.0, abs(vAcross)));
   col *= 1.0 - 0.85 * fog;
   gl_FragColor = vec4(col * 1.5, 1.0);
 }`
@@ -414,7 +416,21 @@ export function Metropolis() {
     const lmat = new PointsMaterial({ color: new Color('#ffb469'), size: 1.6, sizeAttenuation: false, transparent: true, depthWrite: false, blending: AdditiveBlending, toneMapped: false })
     const lamps = new Points(lg, lmat)
     lamps.frustumCulled = false
-    return { mesh, geo, mat, lamps, lg, lmat }
+    // Intersection sparkles: a warm point where each avenue crosses a cross street, outside the repo square.
+    const ip: number[] = []
+    for (let x = -1800; x <= 1800; x += 72) {
+      for (let z = -1800; z <= 1800; z += 22) {
+        if (Math.hypot(x, z) > 1800 || (Math.abs(x) < size / 2 && Math.abs(z) < size / 2)) continue
+        if (Math.abs(x) >= 250 && Math.abs(x) <= 700) continue
+        ip.push(x, LIGHT_Y + 0.1, z)
+      }
+    }
+    const ig = new BufferGeometry()
+    ig.setAttribute('position', new BufferAttribute(new Float32Array(ip), 3))
+    const imat = new PointsMaterial({ color: new Color('#ffa860'), size: 2.2, sizeAttenuation: false, transparent: true, depthWrite: false, blending: AdditiveBlending, toneMapped: false })
+    const sparkles = new Points(ig, imat)
+    sparkles.frustumCulled = false
+    return { mesh, geo, mat, lamps, lg, lmat, sparkles, ig, imat }
   }, [plan])
 
   const horizon = useMemo(() => {
@@ -441,7 +457,7 @@ export function Metropolis() {
   useEffect(() => {
     // The far average of the windows is the warm carpet of light: stronger at night, moderate at blue hour.
     facade.uniforms.uNight!.value = night ? 1.6 : 1.0
-    facade.uniforms.uWinGain!.value = night ? 2.6 : 1.15
+    facade.uniforms.uWinGain!.value = night ? 3.9 : 2.07
     lines.mat.uniforms.uNight!.value = night ? 1.6 : 1.0
   }, [night, facade, lines])
 
@@ -457,6 +473,8 @@ export function Metropolis() {
     parks.mat.dispose()
     parks.lg.dispose()
     parks.lmat.dispose()
+    parks.ig.dispose()
+    parks.imat.dispose()
   }, [parks])
   useEffect(() => () => {
     horizon.geo.dispose()
@@ -469,6 +487,7 @@ export function Metropolis() {
       {built.meshes.map((m, i) => <primitive key={i} object={m} />)}
       <primitive object={parks.mesh} />
       <primitive object={parks.lamps} />
+      <primitive object={parks.sparkles} />
       <primitive object={lines.mesh} />
       <primitive object={horizon.mesh} />
     </>
