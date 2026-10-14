@@ -79,6 +79,7 @@ float fbm(vec2 p) {
   return s;
 }
 
+// Albedo only: asphalt, kerbs, paint, manholes and wet reflections. The light itself is the additive glow layer.
 void main() {
   vec2 p = vW.xz;
   vec2 uv = (p + 0.5 * uSize) / uSize;
@@ -86,7 +87,6 @@ void main() {
   if (s.r < 0.5) discard;
   vec4 g = texture2D(uGlow, uv);
 
-  // Asphalt: dark, with fine grain and broad patches; kerbs and sidewalk strips are lighter concrete.
   float n1 = vnoise(p * 0.9);
   float n2 = vnoise(p * 5.0);
   float n3 = fbm(p * 0.07);
@@ -96,18 +96,14 @@ void main() {
   base = mix(base, vec3(0.62, 0.63, 0.66), s.g * 0.85);
   base = mix(base, vec3(0.82, 0.58, 0.12), s.b * 0.9);
 
-  // Manhole covers: a dark disc in some cells, with a slightly lighter rim.
   vec2 cell = floor(p / 3.2);
   vec2 mc = (cell + 0.5) * 3.2 + (vec2(hash(cell), hash(cell + 7.0)) - 0.5) * 1.2;
   float md = length(p - mc);
   float manhole = step(hash(cell + 3.0), 0.35) * smoothstep(0.17, 0.15, md);
   base *= 1.0 - 0.55 * manhole;
 
-  // Light on the road: sodium lamp pools, the orange band on avenues, junction glow, and signal heads.
-  vec3 sodium = vec3(1.0, 0.56, 0.2);
-  vec3 lit = sodium * (g.r * 0.9 + g.b * 0.7 * (0.8 + 0.2 * n3) + g.a * 0.3) + vec3(1.0, 0.9, 0.75) * g.g * 0.3;
-
   // Wet asphalt: puddles reflect the sky at grazing angles and the lamps as streaks toward the viewer.
+  vec3 sodium = vec3(1.0, 0.56, 0.2);
   float puddle = smoothstep(0.50, 0.63, fbm(p * 0.11 + 3.1)) * uWet;
   vec3 V = normalize(uCam - vW);
   float cosT = clamp(V.y, 0.0, 1.0);
@@ -123,13 +119,31 @@ void main() {
   vec3 skyRefl = mix(vec3(0.03, 0.05, 0.10), vec3(0.45, 0.22, 0.08), pow(1.0 - cosT, 4.0));
   vec3 reflCol = sodium * streak * 0.3 + skyRefl;
 
-  vec3 col = base * (1.0 - 0.55 * puddle) + lit;
+  vec3 col = base * (1.0 - 0.55 * puddle);
   col += puddle * uWet * fres * reflCol * 1.6;
 
   float dist = length(vW - uCam);
   float fog = 1.0 - exp(-pow(dist * uDensity, 2.0));
   col = mix(col, uFog, fog);
   gl_FragColor = vec4(col * uFade, 1.0);
+}`
+
+// Light layer: additive, HDR, never fogged. Avenue sodium bands, lamp pools, junction glow and signal heads, on street
+// texels only. Warm sodium #ffb056 (HDR gains so the centrelines bloom).
+const GLOW_FRAG = `
+uniform sampler2D uSurf;
+uniform sampler2D uGlow;
+uniform float uSize;
+uniform float uFade;
+varying vec3 vW;
+void main() {
+  vec2 uv = (vW.xz + 0.5 * uSize) / uSize;
+  vec4 s = texture2D(uSurf, uv);
+  if (s.r < 0.5) discard;
+  vec4 g = texture2D(uGlow, uv);
+  float k = g.b * 2.6 + g.r * 1.5 + g.a * 1.2 + g.g * 1.6;
+  vec3 warm = vec3(1.0, 0.69, 0.34);
+  gl_FragColor = vec4(warm * k * uFade, 1.0);
 }`
 
 function glowTexture(): Texture {
@@ -167,6 +181,7 @@ interface Procedural {
   root: Group
   mats: Material[]
   surface: ShaderMaterial
+  light: ShaderMaterial
   dispose: () => void
 }
 
@@ -201,6 +216,24 @@ function buildProcedural(layout: CityLayout, plan: RoadPlan): Procedural {
   mesh.raycast = () => {}
   mesh.name = 'road-surface'
   root.add(mesh)
+  const glow = new ShaderMaterial({
+    uniforms: { uSurf: { value: tex.surface }, uGlow: { value: tex.glow }, uSize: { value: raster.size }, uFade: { value: 1 } },
+    vertexShader: SURF_VERT,
+    fragmentShader: GLOW_FRAG,
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+    polygonOffset: true,
+    polygonOffsetFactor: -6,
+    polygonOffsetUnits: -6
+  })
+  const lightMesh = new Mesh(plane, glow)
+  lightMesh.position.y = ROAD_Y + 0.004
+  lightMesh.frustumCulled = false
+  lightMesh.raycast = () => {}
+  lightMesh.renderOrder = 2
+  lightMesh.name = 'road-light'
+  root.add(lightMesh)
 
   // Lamps: poles and heads, the head glow, and the glow points.
   const pole = new MeshStandardMaterial({ color: '#2a2e38', roughness: 0.55, metalness: 0.4, transparent: true, opacity: 1 })
@@ -253,6 +286,7 @@ function buildProcedural(layout: CityLayout, plan: RoadPlan): Procedural {
     root,
     mats: [pole, headMat, glowMat],
     surface,
+    light: glow,
     dispose: () => {
       root.traverse((o) => { if (o instanceof InstancedMesh) o.dispose() })
       plane.dispose()
@@ -260,6 +294,7 @@ function buildProcedural(layout: CityLayout, plan: RoadPlan): Procedural {
       bulb.dispose()
       glowGeo.dispose()
       surface.dispose()
+      glow.dispose()
       pole.dispose()
       headMat.dispose()
       glowMat.dispose()
@@ -434,6 +469,7 @@ function ProceduralRoads({ layout, plan }: { layout: CityLayout; plan: RoadPlan 
       fade.current = performance.now()
       for (const m of built.mats) (m as Material & { opacity: number }).opacity = 0
       built.surface.uniforms.uFade!.value = 0
+      built.light.uniforms.uFade!.value = 0
     }
     return () => {
       parent.remove(built.root)
@@ -459,6 +495,7 @@ function ProceduralRoads({ layout, plan }: { layout: CityLayout; plan: RoadPlan 
     const e = t * t * (3 - 2 * t)
     for (const m of built.mats) (m as Material & { opacity: number }).opacity = e
     built.surface.uniforms.uFade!.value = e
+    built.light.uniforms.uFade!.value = e
     if (t >= 1) fade.current = null
   })
 
