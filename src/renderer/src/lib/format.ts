@@ -49,6 +49,23 @@ export function middleEllipsis(s: string, max = 40): string {
   return `${s.slice(0, head)}…${tail > 0 ? s.slice(-tail) : ''}`
 }
 
+/**
+ * Elides the middle of a directory path so the first segment and the deepest segments stay visible:
+ * "src/renderer/src/hud" -> "src/…/src/hud" at max 14. Whole segments are kept, deepest first,
+ * until the budget is spent. A path that fits, or has nothing to elide, is returned unchanged.
+ */
+export function middleEllipsisDir(dir: string, max = 24): string {
+  if (dir.length <= max) return dir
+  const lead = dir.startsWith('/') ? '/' : ''
+  const segs = dir.split(/[\\/]+/).filter(Boolean)
+  if (segs.length < 2) return dir
+  const prefix = `${lead}${segs[0]}/…/`
+  let start = segs.length - 1
+  while (start > 1 && prefix.length + segs.slice(start - 1).join('/').length <= max) start--
+  const out = `${prefix}${segs.slice(start).join('/')}`
+  return out.length < dir.length ? out : dir
+}
+
 /** Keeps the end of a string, which holds the file name: "…renderer/src/hud/Inspector.tsx". */
 export function tailEllipsis(s: string, max = 24): string {
   if (s.length <= max) return s

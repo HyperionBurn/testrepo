@@ -883,11 +883,28 @@
   font: 400 11px / 1.55 var(--font-mono);
   color: var(--text-2);
   user-select: text;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
 
+/* Scrollbar stays hidden until the listing is hovered or focused. */
+.code-view:hover,
+.code-view:focus-visible {
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+/* Right-edge fade, only while more text lies beyond the visible edge (class set by CodeView). */
+.code-view--fade {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+
+/* Each row is at least as wide as the box and grows to its longest line, so long lines scroll. */
 .code-line {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-columns: 38px max-content;
+  width: max-content;
+  min-width: 100%;
   white-space: pre;
 }
 
@@ -901,7 +918,6 @@
 
 .code-line__t {
   padding-right: 12px;
-  overflow: hidden;
 }
 
 .explain {

@@ -1,6 +1,6 @@
 // Right floating panel for the selected building: path, stats, agents that touched it, recent events,
 // local-LLM explanation, imports, and a read-only preview.
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentEvent, FileNode } from '@shared/types'
 import { useSky } from '../state/store'
 import { LANG_COLORS, LANG_LABEL } from '@shared/lang'
@@ -41,6 +41,43 @@ function Crumbs({ path }: { path: string }) {
           {i > 0 && <span aria-hidden="true">/</span>}
           {i === last ? <b>{p}</b> : <span>{middleEllipsis(p, 22)}</span>}
         </span>
+      ))}
+    </div>
+  )
+}
+
+/** Read-only, horizontally scrollable code listing. The right-edge fade shows only while more text lies off-screen. */
+function CodeView({ lines }: { lines: string[] }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [moreRight, setMoreRight] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const update = () => setMoreRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 1)
+    update()
+    el.addEventListener('scroll', update, { passive: true })
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', update)
+      ro.disconnect()
+    }
+  }, [lines])
+
+  return (
+    <div
+      ref={ref}
+      className={`code-view selectable${moreRight ? ' code-view--fade' : ''}`}
+      role="region"
+      aria-label="File preview"
+      tabIndex={0}
+    >
+      {lines.map((line, i) => (
+        <div className="code-line" key={i}>
+          <span className="code-line__n">{i + 1}</span>
+          <span className="code-line__t">{line || ' '}</span>
+        </div>
       ))}
     </div>
   )
@@ -229,16 +266,7 @@ function InspectorPanel({ path }: { path: string }) {
             </div>
             {preview.status === 'loading' && <div className="skeleton" style={{ height: 120 }} />}
             {preview.status === 'error' && <div className="muted" style={{ fontSize: 12.5 }}>This file could not be read.</div>}
-            {preview.status === 'open' && (
-              <div className="code-view selectable" role="region" aria-label="File preview">
-                {(preview.lines ?? []).map((line, i) => (
-                  <div className="code-line" key={i}>
-                    <span className="code-line__n">{i + 1}</span>
-                    <span className="code-line__t">{line || ' '}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            {preview.status === 'open' && <CodeView lines={preview.lines ?? []} />}
           </div>
         )}
 

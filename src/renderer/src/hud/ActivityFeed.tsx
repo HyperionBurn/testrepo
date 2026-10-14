@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { AgentEvent } from '@shared/types'
 import { useSky } from '../state/store'
-import { relativeTime } from '../lib/format'
+import { middleEllipsisDir, relativeTime } from '../lib/format'
 import { useNow } from '../lib/hooks'
 import { EVENT_META } from './meta'
 
@@ -84,7 +84,7 @@ export function ActivityFeed() {
             <span className="feed-item__file">
               {e.file ? (
                 <>
-                  {dirOf(e.file) && <span className="feed-item__dir">{dirOf(e.file)}/</span>}
+                  {dirOf(e.file) && <span className="feed-item__dir">{middleEllipsisDir(dirOf(e.file), 26)}/</span>}
                   <span className="feed-item__base">{baseOf(e.file)}</span>
                 </>
               ) : (
