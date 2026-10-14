@@ -122,18 +122,18 @@ export function fbm2(x: number, y: number, seed: number): number {
 
 export interface Core { x: number; z: number; r: number; strength: number }
 
-/** 5 to 8 smaller downtown cores (60 to 140 units), spread over the island and the far banks, seeded per repo. */
+/** 6 to 8 downtown cores with gaussian radius 70 to 130 units, on the island and across the rivers, seeded per repo. */
 export function metroCores(seed: number): Core[] {
-  const n = 5 + Math.floor(hash3(0, 0, 0, seed) * 4)
+  const n = 6 + Math.floor(hash3(0, 0, 0, seed) * 3)
   const out: Core[] = []
   for (let k = 0; k < n; k++) {
-    const bank = k % 3 === 2
+    const bank = k % 4 === 3
     const x = bank
       ? (hash3(k, 5, 0, seed) < 0.5 ? -1 : 1) * (850 + hash3(k, 6, 0, seed) * 200)
-      : (hash3(k, 1, 0, seed) * 2 - 1) * 180
+      : (hash3(k, 1, 0, seed) * 2 - 1) * 150
     let z = (hash3(k, 2, 0, seed) * 2 - 1) * 950
-    if (Math.hypot(x, z) < 200) z = (z < 0 ? -1 : 1) * 260
-    out.push({ x, z, r: 60 + 80 * hash3(k, 4, 0, seed), strength: bank ? 0.7 : 1 })
+    if (Math.hypot(x, z) < 320) z = (z < 0 ? -1 : 1) * 340
+    out.push({ x, z, r: 70 + 60 * hash3(k, 4, 0, seed), strength: bank ? 0.8 : 1 })
   }
   return out
 }
@@ -146,30 +146,27 @@ const smooth = (a: number, b: number, x: number): number => {
 export interface LotHeight { h: number; spire: boolean; needle: boolean }
 
 /**
- * Height of a lot centred at (x, z). Mid-rise plateaus (6 to 14 floors) gated by a thresholded low-frequency fbm, so the
- * skyline has real gaps. Cores lift their lots to at most 4.5x mid-rise; about 1 % of lots in the densest cores become
- * slender needles at up to 6x. Each lot varies by +-35 %.
+ * Height in world units (repo mid-rise is 1.6 to 5.5, its spires 22). Far lots: M = 3 to 6 (per lot), scaled by
+ * (1 + Bcore), where Bcore = core mask * (1.2 to 3.0). Cores are gaussian blobs thresholded so about 15 to 20 % of the
+ * metropolis is core. About 1 % of core lots are slender needles of 20 to 32 units. The outer belt halves. Each lot
+ * varies by +-25 %, so neighbours often differ.
  */
 export function lotHeight(x: number, z: number, cores: readonly Core[], seed: number, rnd: number): LotHeight {
-  let coreI = 0
+  let sum = 0
   for (const c of cores) {
     const d2 = (x - c.x) * (x - c.x) + (z - c.z) * (z - c.z)
-    coreI += c.strength * Math.exp(-d2 / (c.r * c.r))
+    sum += c.strength * Math.exp(-d2 / (2 * c.r * c.r))
   }
-  coreI = Math.min(coreI, 1)
-  const f = fbm2(x / 260, z / 260, seed ^ 0x77)
-  const clusters = smooth(0.5, 0.68, f)
-  const mask = Math.max(clusters, coreI)
-  const n = fbm2(x / 90, z / 90, seed ^ 0x51)
-  const low = 5 + 8 * n
-  const midBase = 14 + 28 * n
-  let h = low + (midBase - low) * mask
-  // Cores: a multiplier of 1 to 4.5 over mid-rise.
-  h = h * (1 + 3.5 * coreI * Math.pow(rnd, 1.5))
-  const needle = mask > 0.85 && hash3(Math.round(x * 4), Math.round(z * 4), 11, seed) < 0.01
-  if (needle) h = midBase * (5 + rnd)
-  h *= 0.65 + 0.7 * rnd
-  return { h: Math.max(3, Math.min(h, 400)), spire: needle, needle }
+  const mask = smooth(0.15, 0.6, sum)
+  const n2 = hash3(Math.round(x * 4), Math.round(z * 4), 13, seed)
+  const M = 3 + 3 * rnd
+  let h = M * (1 + mask * (1.2 + 1.8 * n2))
+  const needle = mask > 0.3 && hash3(Math.round(x * 4), Math.round(z * 4), 11, seed) < 0.01
+  if (needle) h = 20 + 12 * hash3(Math.round(x * 4), Math.round(z * 4), 17, seed)
+  const r = Math.hypot(x, z)
+  if (r > 1300) h *= 0.5
+  h *= 0.75 + 0.5 * hash3(Math.round(x * 4), Math.round(z * 4), 19, seed)
+  return { h: Math.max(1.6, h), spire: needle, needle }
 }
 
 // ---- The plan --------------------------------------------------------------------------------------------
@@ -257,7 +254,6 @@ export function buildMetro(opts: MetroOptions): MetroPlan {
   const seed = hashName(opts.name)
   const R = opts.radius ?? METRO_RADIUS
   const maxLots = opts.maxLots ?? MAX_LOTS
-  const repoTop = Math.max(10, opts.repoTop ?? 40)
   const E = opts.half + EXCLUSION_MARGIN
   const cores = metroCores(seed)
   const keepOut = BRIDGES.map(bridgeSpan)
@@ -315,8 +311,9 @@ export function buildMetro(opts: MetroOptions): MetroPlan {
     const lh = lotHeight(x, z, cores, seed, hash3(c.i, c.j, c.k, seed ^ 0x13))
     // Hard local cap next to the repo plate only; beyond 150 units there is no envelope at all.
     const gap = Math.hypot(Math.max(0, Math.abs(x) - opts.half), Math.max(0, Math.abs(z) - opts.half))
-    let h = Math.min(lh.h, 2.2 * repoTop)
-    if (gap < 150) h = Math.min(h, 0.4 * repoTop)
+    let h = lh.h
+    // The only cap: lots within 150 units of the repo plate stay at 12 units or less.
+    if (gap < 150) h = Math.min(h, 12)
     const spire = lh.spire
     // Slenderness <= 5: a tall lot takes a wider footprint (up to 14 units) rather than a needle on a lot.
     let widthScale = Math.max(1, Math.min(14 / c.w, h / (5 * c.w)))

@@ -89,7 +89,7 @@ describe('metro plan', () => {
     const gapTo = (x: number, z: number) => Math.hypot(Math.max(0, Math.abs(x) - HALF), Math.max(0, Math.abs(z) - HALF))
     const near = allLots(plan).filter((l) => gapTo(l.x, l.z) < 150)
     expect(near.length).toBeGreaterThan(0)
-    for (const l of near) expect(l.h).toBeLessThanOrEqual(0.4 * 40 + 1e-3)
+    for (const l of near) expect(l.h).toBeLessThanOrEqual(12 + 1e-3)
   })
 
   it('has spiky downtown cores and low edges', () => {
@@ -98,15 +98,15 @@ describe('metro plan', () => {
     const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
     const core = heightsWhere((r) => r < 900)
     const edge = heightsWhere((r) => r > 1400)
-    expect(Math.max(...core)).toBeGreaterThan(70)
+    expect(Math.max(...core)).toBeGreaterThan(18)
     const p95 = [...core].sort((a, b) => a - b)[Math.floor(core.length * 0.95)]!
     expect(p95).toBeGreaterThan(mean(edge) * 2)
     expect(mean(edge)).toBeLessThan(40)
   })
 
-  it('places 5 to 8 cores on the island and across the rivers', () => {
+  it('places 6 to 8 cores on the island and across the rivers', () => {
     const cores = metroCores(hashName(NAME))
-    expect(cores.length).toBeGreaterThanOrEqual(5)
+    expect(cores.length).toBeGreaterThanOrEqual(6)
     expect(cores.length).toBeLessThanOrEqual(8)
     for (const c of cores) expect(Math.abs(c.x) < 250 || Math.abs(c.x) > 700).toBe(true)
     expect(cores.some((c) => Math.abs(c.x) < 250)).toBe(true)
