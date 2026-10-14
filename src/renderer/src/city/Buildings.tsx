@@ -9,7 +9,7 @@ import { BuildingField } from './BuildingField'
 import { createBuildingMaterials, prepareModelMaterial, type BuildingMaterials } from './buildingShader'
 import { agentHex, resolveHeat } from './data'
 import { isClick } from './registry'
-import { loadEmissiveAtlas, loadModels, type LoadedModel } from './assets'
+import { loadModels, type LoadedModel } from './assets'
 import { locByPath } from './modelPicker'
 import { throttle } from './picking'
 
@@ -36,13 +36,13 @@ declare global {
 /** Models already in memory, by id. Filled once: later fields start with them and skip the box fallback. */
 const loaded = new Map<string, LoadedModel>()
 
-/** Loads the given models and the emissive atlas, and points the model material at the atlases. */
+/** Loads the given models and points the model material at the shared colormap. */
 async function loadAll(ids: string[], mats: BuildingMaterials): Promise<ReadonlyMap<string, LoadedModel>> {
   if (ids.every((id) => loaded.has(id))) return loaded
-  const [models, emissive] = await Promise.all([loadModels(ids), loadEmissiveAtlas()])
+  const models = await loadModels(ids)
   for (const m of models) loaded.set(m.def.id, m)
   const first = models[0]
-  if (first) prepareModelMaterial(mats.models, first.map as Texture, emissive)
+  if (first) prepareModelMaterial(mats.models, first.map as Texture)
   return loaded
 }
 

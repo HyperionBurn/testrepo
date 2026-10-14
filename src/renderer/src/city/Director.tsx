@@ -20,6 +20,7 @@ import {
   summarize,
   type ActiveAgent,
   type DistrictBox,
+  type Footprint,
   type Memory,
   type Scene,
   type ShotKind,
@@ -62,6 +63,7 @@ interface Geo {
   hoods: NeighborhoodIndex;
   boxes: DistrictBox[];
   spots: Map<string, { c: Vec3; top: number }>;
+  footprints: Footprint[];
 }
 
 let geo: Geo | null = null
@@ -76,7 +78,8 @@ function geometryFor(layout: CityLayout, hoods: NeighborhoodIndex): Geo {
     spots.set(b.path, { c: visCenter(b, layout), top })
     items.push({ path: b.path, x: b.x, z: b.z, w: b.w, d: b.d, top })
   }
-  geo = { layout, hoods, boxes: districtBoxes(items, (p) => hoods.keyOf.get(p)), spots }
+  const footprints = items.map((b) => ({ x: b.x, z: b.z, w: b.w, d: b.d, top: b.top }))
+  geo = { layout, hoods, boxes: districtBoxes(items, (p) => hoods.keyOf.get(p)), spots, footprints }
   return geo
 }
 
@@ -93,7 +96,7 @@ function buildScene(now: number): Scene | null {
     const spot = a.currentFile ? g.spots.get(a.currentFile) : undefined
     agents.push({ id: a.id, status: a.status, building: spot?.c, top: spot?.top })
   }
-  return { now, summary, boxes: g.boxes, agents }
+  return { now, summary, boxes: g.boxes, agents, footprints: g.footprints }
 }
 
 function cloneView(v: View): View {

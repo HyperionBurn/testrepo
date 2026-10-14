@@ -28,8 +28,12 @@ export const COOLDOWN_S: Record<ShotKind, number> = { orbit: 0, follow: 8, crane
 
 const FOLLOW_BACK = 14
 const FOLLOW_UP = 5
-const FLY_STREET_Y = 5.5
-const FLY_LOOK_Y = 4.2
+/** A fly-through skims the street, but never lower than this, and clears the roofs it passes by FLY_CLEAR. */
+const FLY_MIN_Y = 6
+const FLY_MAX_Y = 40
+const FLY_CLEAR = 3
+const FLY_SAMPLES = 16
+const FLY_LOOK_DROP = 1.3
 const CRANE_START_Y = 3
 const MIN_CAMERA_Y = 2.5
 const TWO_PI = Math.PI * 2
@@ -71,11 +75,21 @@ export interface Summary {
   streakAgent: string | null;
 }
 
+/** A building's footprint and roof height, for keeping a fly-through clear of the roofs it passes. */
+export interface Footprint {
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+  top: number;
+}
+
 export interface Scene {
   now: number;
   summary: Summary;
   boxes: DistrictBox[];
   agents: ActiveAgent[];
+  footprints?: readonly Footprint[];
 }
 
 export interface Memory {
@@ -119,6 +133,8 @@ export interface FlySpec extends ShotBase {
   kind: 'flythrough';
   from: Vec3;
   to: Vec3;
+  /** Height of the camera along the pass: clear of the roofs it passes, bounded below by FLY_MIN_Y. */
+  y: number;
 }
 export type ShotSpec = OrbitSpec | FollowSpec | CraneSpec | RevealSpec | FlySpec
 
@@ -239,6 +255,25 @@ export function summarize(events: readonly EventSample[], now: number, districtO
 /** Agents that are editing a file with a known building. */
 export function editTargets(agents: readonly ActiveAgent[]): ActiveAgent[] {
   return agents.filter((a) => a.status === 'editing' && a.building !== undefined)
+}
+
+/**
+ * Height for a pass from a to b (ground coordinates): just above the tallest roof the straight line crosses or grazes,
+ * never below FLY_MIN_Y and never above FLY_MAX_Y (a pass through a very tall block is taken at the ceiling).
+ */
+export function flyHeight(a: Vec3, b: Vec3, footprints: readonly Footprint[]): number {
+  let roof = 0
+  for (let i = 0; i <= FLY_SAMPLES; i++) {
+    const u = i / FLY_SAMPLES
+    const px = lerp(a.x, b.x, u)
+    const pz = lerp(a.z, b.z, u)
+    for (const f of footprints) {
+      if (f.top <= roof) continue
+      const m = 1.5
+      if (px >= f.x - m && px <= f.x + f.w + m && pz >= f.z - m && pz <= f.z + f.d + m) roof = f.top
+    }
+  }
+  return Math.min(FLY_MAX_Y, Math.max(FLY_MIN_Y, roof + FLY_CLEAR))
 }
 
 /** The two active agents' buildings that are farthest apart (on the ground), if there are enough drones and they are far apart. */
@@ -393,13 +428,9 @@ export function planShot(kind: ShotKind, scene: Scene, rand: () => number): Shot
       const ux = (b.x - a.x) / len
       const uz = (b.z - a.z) / len
       // Start and end just outside the two buildings, so the camera does not open inside one.
-      return {
-        kind: 'flythrough',
-        dur,
-        theta0,
-        from: { x: a.x + ux * 4, y: FLY_STREET_Y, z: a.z + uz * 4 },
-        to: { x: b.x - ux * 4, y: FLY_STREET_Y, z: b.z - uz * 4 }
-      }
+      const from = { x: a.x + ux * 4, y: 0, z: a.z + uz * 4 }
+      const to = { x: b.x - ux * 4, y: 0, z: b.z - uz * 4 }
+      return { kind: 'flythrough', dur, theta0, from, to, y: flyHeight(from, to, scene.footprints ?? []) }
     }
     case 'reveal':
       return reveal
@@ -446,8 +477,8 @@ export function shotView(spec: ShotSpec, t: number, live: LiveInputs): View | nu
       // Fastest mid-shot. The look point runs ahead of the camera along the street.
       const s = 0.5 - 0.5 * Math.cos(Math.PI * u)
       const ahead = Math.min(1, s + 0.12)
-      const pos = { x: lerp(spec.from.x, spec.to.x, s), y: FLY_STREET_Y, z: lerp(spec.from.z, spec.to.z, s) }
-      const look = { x: lerp(spec.from.x, spec.to.x, ahead), y: FLY_LOOK_Y, z: lerp(spec.from.z, spec.to.z, ahead) }
+      const pos = { x: lerp(spec.from.x, spec.to.x, s), y: spec.y, z: lerp(spec.from.z, spec.to.z, s) }
+      const look = { x: lerp(spec.from.x, spec.to.x, ahead), y: spec.y - FLY_LOOK_DROP, z: lerp(spec.from.z, spec.to.z, ahead) }
       return view(pos, look, 9 * Math.sin(Math.PI * u))
     }
   }

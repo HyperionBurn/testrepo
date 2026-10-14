@@ -35,8 +35,8 @@ const SPRING_K = 9
 const SPRING_C = 2 * Math.sqrt(SPRING_K)
 const TAG_ANCHOR_Y = 1.6
 const TAG_GAP = 4             // px between tags after collision resolution
-const ESCORT_SCALE = 0.8
-const HULL_SCALE = 1.5
+const ESCORT_SCALE = 0.9
+const HULL_SCALE = 1.8
 const IDLE_ALPHA = 0.42
 
 // ---------------------------------------------------------------------------------------------
@@ -107,7 +107,7 @@ varying vec3 vN;
 varying vec3 vV;
 void main() {
   float rim = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.2);
-  vec3 col = vC * (0.16 + rim * 2.2) + vec3(0.02, 0.03, 0.05);
+  vec3 col = vC * (0.42 + rim * 2.0) + vec3(0.05, 0.06, 0.09);
   gl_FragColor = vec4(col, vA);
 }`
 
@@ -635,11 +635,11 @@ export class Fleet implements FxSystem {
     if (this.live && !reduced && t - s.lastPop >= POPUP_GAP_S && (s.pendCost >= POPUP_MIN_COST || s.pendTok >= POPUP_MIN_TOKENS)) {
       const hex = `#${s.color.getHexString()}`
       if (s.pendCost >= POPUP_MIN_COST) {
-        emitFx({ type: 'popup', agentId: s.id, text: `+${formatCost(s.pendCost)}`, color: hex, x: s.pos.x, y: s.pos.y + 2.2, z: s.pos.z })
+        emitFx({ type: 'popup', agentId: s.id, text: `+${formatCost(s.pendCost)}`, color: hex, x: s.pos.x, y: s.pos.y + 4.2, z: s.pos.z })
         s.pendCost = 0
       }
       if (s.pendTok >= POPUP_MIN_TOKENS) {
-        emitFx({ type: 'popup', agentId: s.id, text: `+${formatTokens(s.pendTok)}`, color: hex, x: s.pos.x, y: s.pos.y + 3.1, z: s.pos.z })
+        emitFx({ type: 'popup', agentId: s.id, text: `+${formatTokens(s.pendTok)}`, color: hex, x: s.pos.x, y: s.pos.y + 5.4, z: s.pos.z })
         s.pendTok = 0
       }
       s.lastPop = t

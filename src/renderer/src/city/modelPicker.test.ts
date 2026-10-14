@@ -6,6 +6,7 @@ import {
   LocRank,
   MAX_STRETCH,
   MIN_STRETCH,
+  stretchRange,
   TRI_BUDGET,
   classChain,
   hashPath,
@@ -106,11 +107,11 @@ describe('model choice within a class', () => {
     let outside = 0
     for (const input of inputs) {
       const p = pickPlacement(input, rank, false)
-      if (p.stretch < MIN_STRETCH || p.stretch > MAX_STRETCH) outside++
+      const [lo, hi] = stretchRange(p.cls)
+      if (p.stretch < lo || p.stretch > hi) outside++
     }
-    // Detailed-model fallbacks only; low-detail blocks are allowed a wider range by design.
-    // Squat footprints (height near the base, wide) can need a flatter model than any in the set; the fallback is the closest.
-    expect(outside / inputs.length).toBeLessThan(0.1)
+    // Squat footprints can need a flatter model than any in the set; the fallback is the closest one (counted here).
+    expect(outside / inputs.length).toBeLessThan(0.03)
   })
 
   it('a squat, wide building avoids tall models and a needle avoids squat ones', () => {

@@ -8,6 +8,12 @@ export const FILL = 0.9
 export const MIN_STRETCH = 0.5
 export const MAX_STRETCH = 3
 /**
+ * Wider range for the classes whose models are plain, squat blocks (houses, low-detail): a squat file gets a squat
+ * house instead of a distorted tower, so out-of-range placements stay rare on small repos.
+ */
+export const WIDE_MIN_STRETCH = 0.35
+export const WIDE_MAX_STRETCH = 4
+/**
  * Low-detail models are plain blocks with no windows to distort, so they may be stretched further: a tiny flat file
  * becomes a flat low-detail block. Outside this range even they are not used.
  */
@@ -87,10 +93,16 @@ export function aspectError(w: number, d: number, h: number, m: ModelDef): numbe
   return Math.abs(Math.log(target / model))
 }
 
+/** Allowed stretch range for a model class. */
+export function stretchRange(cls: ModelClass): readonly [number, number] {
+  if (cls === 'lowdetail') return [LOW_DETAIL_MIN_STRETCH, LOW_DETAIL_MAX_STRETCH]
+  if (cls === 'house') return [WIDE_MIN_STRETCH, WIDE_MAX_STRETCH]
+  return [MIN_STRETCH, MAX_STRETCH]
+}
+
 function inRange(m: ModelDef, s: number): boolean {
-  return m.cls === 'lowdetail'
-    ? s >= LOW_DETAIL_MIN_STRETCH && s <= LOW_DETAIL_MAX_STRETCH
-    : s >= MIN_STRETCH && s <= MAX_STRETCH
+  const [lo, hi] = stretchRange(m.cls)
+  return s >= lo && s <= hi
 }
 
 function placementOf(input: PickInput, m: ModelDef): Placement {

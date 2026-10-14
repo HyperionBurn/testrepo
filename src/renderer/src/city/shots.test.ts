@@ -6,6 +6,7 @@ import {
   COOLDOWN_S,
   districtBoxes,
   eligibleKinds,
+  flyHeight,
   flyPair,
   lerpView,
   mulberry32,
@@ -289,6 +290,36 @@ describe('planShot and shotView', () => {
 
   it('a fly-through without its pair falls back to reveal', () => {
     expect(planShot('flythrough', scene(), rand).kind).toBe('reveal')
+  })
+})
+
+describe('flyHeight', () => {
+  const a = { x: -40, y: 0, z: 0 }
+  const b = { x: 40, y: 0, z: 0 }
+
+  it('flies just above the tallest roof the straight pass crosses', () => {
+    const tower = { x: -2, z: -3, w: 4, d: 6, top: 22 }
+    expect(flyHeight(a, b, [tower])).toBeCloseTo(22 + 3, 6)
+  })
+
+  it('ignores roofs the pass does not touch', () => {
+    const aside = { x: -2, z: 20, w: 4, d: 6, top: 60 }
+    expect(flyHeight(a, b, [aside])).toBe(6)
+  })
+
+  it('stays at the ceiling for a very tall block in the way', () => {
+    expect(flyHeight(a, b, [{ x: -2, z: -3, w: 4, d: 6, top: 200 }])).toBe(40)
+  })
+
+  it('a planned fly-through is clear of the footprints it passes', () => {
+    const tall = { x: -4, z: -4, w: 8, d: 8, top: 30 }
+    const pair: ActiveAgent[] = [agent('a', 'editing', { x: -40, y: 5, z: 0 }), agent('b', 'reading', { x: 40, y: 5, z: 0 }), agent('c', 'thinking', { x: 0, y: 5, z: 1 })]
+    const spec = planShot('flythrough', { ...scene({ agents: pair }), footprints: [tall] }, mulberry32(9))
+    expect(spec.kind).toBe('flythrough')
+    if (spec.kind !== 'flythrough') return
+    expect(spec.y).toBeGreaterThanOrEqual(30)
+    const mid = shotView(spec, spec.dur / 2, live())!
+    expect(mid.pos.y).toBeCloseTo(spec.y, 6)
   })
 })
 

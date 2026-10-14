@@ -240,10 +240,12 @@ export function createBuildingMaterials(): BuildingMaterials {
   return { models, boxes, time }
 }
 
-/** Points the model material at the shared atlas and the emissive atlas. Recompiles only when they change. */
-export function prepareModelMaterial(material: MeshStandardMaterial, map: Texture, emissiveMap: Texture): void {
-  if (material.map === map && material.emissiveMap === emissiveMap) return
+/**
+ * Points the model material at the shared colormap. Recompiles only when it changes. The emissive atlas is never
+ * bound here: window emission comes from the per-pane aWin path in the shader, so no building material reads it.
+ */
+export function prepareModelMaterial(material: MeshStandardMaterial, map: Texture): void {
+  if (material.map === map) return
   material.map = map
-  material.emissiveMap = emissiveMap
   material.needsUpdate = true
 }

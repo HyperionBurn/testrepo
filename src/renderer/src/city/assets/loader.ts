@@ -1,4 +1,4 @@
-import { BufferGeometry, Float32BufferAttribute, Mesh, NearestFilter, Object3D, SRGBColorSpace, Texture, TextureLoader } from 'three'
+import { BufferGeometry, Float32BufferAttribute, LinearMipmapLinearFilter, Mesh, NearestFilter, Object3D, SRGBColorSpace, Texture, TextureLoader } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { COLORMAP_URL, getModel, type ModelDef } from './manifest'
@@ -17,15 +17,20 @@ export { getModel, modelsByClass, MODELS, type ModelDef, type ModelClass } from 
 
 let colormap: Promise<Texture> | null = null
 
-/** Shared colormap (palette atlas): sRGB, no flip (glTF UV space), nearest sampling, no mipmaps. */
+/**
+ * Shared colormap (palette atlas): sRGB, no flip (glTF UV space). Mipmapped with linear-mip minification, so a
+ * distant or close wall samples an average of its palette texels instead of one (the per-pixel speckle came from
+ * nearest sampling of the dithered palette). Magnification stays nearest so close-ups keep their texel edges.
+ */
 export function loadColormap(): Promise<Texture> {
   if (!colormap) {
     colormap = new TextureLoader().loadAsync(COLORMAP_URL).then((tex) => {
       tex.colorSpace = SRGBColorSpace
       tex.flipY = false
-      tex.minFilter = NearestFilter
+      tex.minFilter = LinearMipmapLinearFilter
       tex.magFilter = NearestFilter
-      tex.generateMipmaps = false
+      tex.generateMipmaps = true
+      tex.anisotropy = 4
       tex.needsUpdate = true
       return tex
     }).catch((err) => {
