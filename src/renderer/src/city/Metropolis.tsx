@@ -15,6 +15,8 @@ import { FOG_HEX, skyTime } from './Sky'
 import { GRID_ANGLE, HAZE_DENSITY, buildMetro, type LotSet, type MetroPlan } from './metro'
 
 const LIGHT_Y = 0.12
+/** Far haze: the scene fog colour, warmed toward the sodium glow so the far city fades into orange light. */
+const METRO_HAZE = new Color(FOG_HEX).lerp(new Color('#4a2a18'), 0.4)
 const HORIZON_R = 1790
 const HORIZON_H = 220
 
@@ -122,7 +124,7 @@ void main() {
   // Lit panes: about 42 % of windows, whole floors lit in runs now and then, mostly warm light.
   float r = h21(id + sd);
   float run = step(0.86, h21(vec2(id.y + 3.0, sd)));
-  float lit = max(step(r, 0.42), run * step(h21(id * 1.3 + sd + 7.0), 0.7));
+  float lit = max(step(r, 0.45), run * step(h21(id * 1.3 + sd + 7.0), 0.7));
   float cool = step(0.9, h21(id * 1.7 + sd + 19.0));
   vec3 winCol = mix(vec3(1.0, 0.64, 0.30), vec3(0.72, 0.9, 1.0), cool);
   float pane = step(0.2, f.x) * step(f.x, 0.8) * step(0.24, f.y) * step(f.y, 0.8);
@@ -130,7 +132,7 @@ void main() {
   vec2 fw = fwidth(g);
   float px = max(fw.x, fw.y);
   float aa = 1.0 - smoothstep(0.22, 0.7, px);
-  float emitW = (lit * pane * aa + (1.0 - aa) * 0.42 * 0.36) * uWinGain;
+  float emitW = (lit * pane * aa + (1.0 - aa) * 0.45 * 0.36) * uWinGain;
   vec3 col = wall + winCol * emitW;
   // Tall towers: a lit crown band near the top, and a faint warm rim where the face turns away.
   float tall = smoothstep(60.0, 180.0, vHgt);
@@ -179,7 +181,7 @@ void main() {
   float dist = length(vW - cameraPosition);
   float fog = 1.0 - exp(-pow(dist * uFogK, 2.0));
   col *= 1.0 - 0.85 * fog;
-  gl_FragColor = vec4(col * 0.9, 1.0);
+  gl_FragColor = vec4(col * 1.5, 1.0);
 }`
 
 // ---- Horizon band ----------------------------------------------------------------------------------------
@@ -200,7 +202,7 @@ varying float vAz;
 void main() {
   float ripple = 0.75 + 0.25 * sin(vAz * 23.0 + sin(vAz * 7.0) * 2.0 + uTime * 0.05);
   float a = pow(1.0 - clamp(vY, 0.0, 1.0), 2.2) * ripple;
-  vec3 col = vec3(1.0, 0.5, 0.2) * 0.42 * a;
+  vec3 col = vec3(1.0, 0.5, 0.2) * 0.6 * a;
   gl_FragColor = vec4(col, 1.0);
 }`
 
@@ -253,7 +255,7 @@ export function Metropolis() {
   const facade = useMemo(() => new ShaderMaterial({
     uniforms: {
       uFogK: { value: HAZE_DENSITY },
-      uHaze: { value: new Color(FOG_HEX) },
+      uHaze: { value: new Color(METRO_HAZE) },
       uWinGain: { value: 1.0 }
     },
     vertexShader: FACADE_VERT,
@@ -263,7 +265,7 @@ export function Metropolis() {
   const lines = useMemo(() => {
     const geo = lineGeometry(plan)
     const mat = new ShaderMaterial({
-      uniforms: { uTime: skyTime, uFogK: { value: HAZE_DENSITY }, uHaze: { value: new Color(FOG_HEX) } },
+      uniforms: { uTime: skyTime, uFogK: { value: HAZE_DENSITY }, uHaze: { value: new Color(METRO_HAZE) } },
       vertexShader: LINE_VERT,
       fragmentShader: LINE_FRAG,
       transparent: true,

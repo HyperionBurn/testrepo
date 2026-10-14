@@ -192,6 +192,21 @@ export function streetFace(grid: FootprintGrid, buildings: readonly PlanBuilding
 
 interface Rect { u0: number; u1: number; v0: number; v1: number }
 
+/** The widest face with at least FREE_MIN of open space in front of it (the street face if none qualifies). */
+function widestOpenFace(grid: FootprintGrid, buildings: readonly PlanBuilding[], idx: number): Face {
+  const b = buildings[idx]!
+  let best: Face = 'S'
+  let bestSpan = -1
+  for (const f of FACES) {
+    const span = faceSpan(b, f)
+    if (span > bestSpan && freeDistance(grid, buildings, idx, f) >= FREE_MIN) {
+      bestSpan = span
+      best = f
+    }
+  }
+  return best
+}
+
 /** Face-local rectangles already used, per building and face. A new sign must clear all of them. */
 class FaceBoard {
   private readonly used = new Map<number, Rect[]>()
@@ -260,8 +275,10 @@ function place(board: FaceBoard, a: PlaceArgs): SignSpec | null {
   }
 }
 
-/** Buildings with a top of at least this many units can carry a sign at all. */
-const MIN_SIGN_TOP = 4
+/** Buildings with a top of at least this many units can carry a sign at all (most repos are low-rise). */
+const MIN_SIGN_TOP = 1.8
+/** A city with fewer candidate buildings than this gets no Times Square. */
+const MIN_HOTSPOT = 4
 
 /** Hotspot: the tallest of the nearest HOTSPOT_POOL buildings to the centroid. Empty when there are too few. */
 export function hotspotOf(buildings: readonly PlanBuilding[], cx: number, cz: number): number[] {
@@ -276,7 +293,7 @@ export function hotspotOf(buildings: readonly PlanBuilding[], cx: number, cz: nu
   }
   cand.sort((a, b) => d2(a) - d2(b) || (buildings[a]!.path < buildings[b]!.path ? -1 : 1))
   const near = cand.slice(0, HOTSPOT_POOL)
-  if (near.length < HOTSPOT_MIN) return []
+  if (near.length < MIN_HOTSPOT) return []
   near.sort((a, b) => buildings[b]!.top - buildings[a]!.top || (buildings[a]!.path < buildings[b]!.path ? -1 : 1))
   return near.slice(0, HOTSPOT_SIZE)
 }
@@ -323,13 +340,16 @@ export function planSigns(buildings: readonly PlanBuilding[]): SignPlan {
     const face = streetFace(grid, buildings, idx)
     const span = faceSpan(b, face)
     const seed = hash01(b.path, 'hot')
-    if (billboards < HOTSPOT_BILLBOARDS && b.top >= 8 && span >= 2.2) {
-      const w = billboardSize(span)
-      const h = Math.min(3, Math.max(0.8, w * 0.5))
-      const v = Math.min(Math.max(2.2, b.top * 0.45), b.top - h - 0.6)
-      if (v >= 2.2) {
+    if (billboards < HOTSPOT_BILLBOARDS) {
+      // The street face when it is wide enough, else the widest open face: a billboard needs a facade, not a street.
+      const bbFace = span >= 2.2 ? face : widestOpenFace(grid, buildings, idx)
+      const bbSpan = faceSpan(b, bbFace)
+      const w = billboardSize(bbSpan)
+      const h = Math.min(3, Math.max(0.8, w * 0.5), b.top - 2.8)
+      if (bbSpan >= 2.2 && h >= 0.8) {
+        const v = Math.max(2.2, Math.min(b.top * 0.45, b.top - h - 0.6))
         push(place(board, {
-          kind: 'billboard', idx, b, face, u: span / 2, uw: w, v, h, w, hot: true, seed, color: '#ffffff'
+          kind: 'billboard', idx, b, face: bbFace, u: bbSpan / 2, uw: w, v, h, w, hot: true, seed, color: '#ffffff'
         }))
       }
     }
@@ -339,7 +359,7 @@ export function planSigns(buildings: readonly PlanBuilding[]): SignPlan {
         w: Math.min(7, Math.max(1, span * 0.86)), hot: true, seed, color: pickColor(b.path, 'marquee')
       }))
     }
-    if (b.top >= 7) {
+    if (b.top >= 3.6) {
       let other: Face = face
       let best = -Infinity
       for (const f of FACES) {
@@ -350,11 +370,11 @@ export function planSigns(buildings: readonly PlanBuilding[]): SignPlan {
           other = f
         }
       }
-      if (best >= FREE_MIN) {
-        const h = Math.min(2.6, b.top * 0.45)
+      const h = Math.min(2.6, b.top - 1.8)
+      if (best >= FREE_MIN && h >= 0.8) {
         push(place(board, {
           kind: 'blade', idx, b, face: other, u: faceSpan(b, other) * (seed < 0.5 ? 0.25 : 0.75), uw: 0.6,
-          v: Math.max(1.4, b.top * 0.3), h, w: 0.9, hot: true, seed, color: pickColor(b.path, 'blade-hot')
+          v: 1, h, w: 0.9, hot: true, seed, color: pickColor(b.path, 'blade-hot')
         }))
       }
     }
@@ -365,7 +385,7 @@ export function planSigns(buildings: readonly PlanBuilding[]): SignPlan {
     if (hotSet.has(idx)) return
     const p = hash01(b.path, 'sparse')
     const span = Math.max(b.w, b.d)
-    if (b.top >= 16 && p < 0.02 && billboards < BILLBOARD_MAX) {
+    if (b.top >= 8 && p < 0.02 && billboards < BILLBOARD_MAX) {
       const face = streetFace(grid, buildings, idx)
       const fspan = faceSpan(b, face)
       if (fspan >= 2) {
@@ -376,13 +396,15 @@ export function planSigns(buildings: readonly PlanBuilding[]): SignPlan {
           hot: false, seed: hash01(b.path, 'sparse-bb'), color: '#ffffff'
         }))
       }
-    } else if (b.top >= 6 && span >= 1.4 && p < 0.05) {
+    } else if (b.top >= 3.6 && span >= 1.4 && p < 0.05) {
       const face = streetFace(grid, buildings, idx)
-      const h = Math.min(2.4, b.top * 0.4)
-      push(place(board, {
-        kind: 'blade', idx, b, face, u: faceSpan(b, face) * 0.5, uw: 0.6, v: Math.max(1, b.top * 0.3), h, w: 0.9,
-        hot: false, seed: hash01(b.path, 'sparse-blade'), color: pickColor(b.path, 'blade')
-      }))
+      const h = Math.min(2.4, b.top - 1.8)
+      if (h >= 0.8) {
+        push(place(board, {
+          kind: 'blade', idx, b, face, u: faceSpan(b, face) * 0.5, uw: 0.6, v: 1, h, w: 0.9,
+          hot: false, seed: hash01(b.path, 'sparse-blade'), color: pickColor(b.path, 'blade')
+        }))
+      }
     }
   })
 

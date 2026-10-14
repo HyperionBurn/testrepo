@@ -127,7 +127,7 @@ export function buildRoadRaster(
         if (u < -0.6 || u > len + 0.6 || Math.abs(perp) > 0.6) continue
         // Avenue glow band: wide, soft, across the whole street.
         if (avenue && u >= 0 && u <= len && Math.abs(perp) <= 0.9) {
-          put(glow, width, px, py, 2, 255 * Math.exp(-((perp / 0.5) ** 2)), false)
+          put(glow, width, px, py, 2, 255 * Math.exp(-((perp / 0.3) ** 2)), false)
         }
         if (u < 0 || u > len) continue
         // Zebra: bars along the traffic, pitched across it, in the zone just before a signalled junction.

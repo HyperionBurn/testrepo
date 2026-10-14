@@ -99,6 +99,13 @@ interface Build {
   dist: Float64Array;
   maxDist: number;
   spires: Set<number>;
+  /** Heights that count as mid-rise and tall, scaled to the city so a low-rise repo still gets clutter. */
+  midTop: number;
+  tallTop: number;
+}
+
+function maxTopOf(buildings: readonly PlanBuilding[]): number {
+  return buildings.reduce((m, b) => Math.max(m, b.top), 0)
 }
 
 /** Thinning by distance band: the centre keeps everything, the far edge keeps a fifth. */
@@ -123,8 +130,8 @@ function buildPlan(bd: Build): RooftopPlan {
     const keep = keepFor(bd, i)
     const r = (key: string): number => hash01(b.path, key)
     const kept = (key: string): boolean => r(key) < keep
-    const tall = top >= TALL_TOP
-    const mid = top >= MID_TOP
+    const tall = top >= bd.tallTop
+    const mid = top >= bd.midTop
     const cx = b.x + b.w / 2
     const cz = b.z + b.d / 2
     const minSide = Math.min(b.w, b.d)
@@ -162,7 +169,7 @@ function buildPlan(bd: Build): RooftopPlan {
     }
 
     // Stair and elevator bulkheads sit in a roof corner. Tall buildings almost always have one.
-    if (((tall && r('bulk') < 0.85) || (top >= 10 && r('bulk') < 0.3)) && kept('bulk')) {
+    if (((tall && r('bulk') < 0.85) || (top >= bd.tallTop * 0.8 && r('bulk') < 0.3)) && kept('bulk')) {
       const sx = b.w * (0.3 + 0.12 * r('bulk-w'))
       const sz = b.d * (0.3 + 0.15 * r('bulk-d'))
       const east = r('bulk-c') < 0.5
@@ -187,14 +194,14 @@ function buildPlan(bd: Build): RooftopPlan {
     }
 
     // Antenna masts on the taller roofs (not spires).
-    if (top >= 14 && kept('mast') && r('mast') < 0.25 && !bd.spires.has(i)) {
+    if (top >= bd.tallTop && kept('mast') && r('mast') < 0.25 && !bd.spires.has(i)) {
       plan.masts.push(base(i, inside(b.x, b.x + b.w, 0.1, r('mast-x')), inside(b.z, b.z + b.d, 0.1, r('mast-z')), top, {
         sx: 1, sy: 1.6 + 2.2 * r('mast-h'), sz: 1, tone: r('mast-tone')
       }))
     }
 
     // Satellite dishes, tilted to the sky.
-    if (top >= 10 && kept('dish') && r('dish') < 0.12) {
+    if (top >= bd.tallTop * 0.8 && kept('dish') && r('dish') < 0.12) {
       const s = 0.35 + 0.25 * r('dish-s')
       plan.dishes.push(base(i, inside(b.x, b.x + b.w, s, r('dish-x')), inside(b.z, b.z + b.d, s, r('dish-z')), top, {
         sx: s, sy: s, sz: s, rot: r('dish-rot') * Math.PI * 2, tilt: 0.45 + 0.35 * r('dish-tilt'), tone: r('dish-tone')
@@ -276,17 +283,21 @@ export function planRooftops(buildings: readonly PlanBuilding[], budget = ROOF_B
     const count = Math.max(1, Math.round(n * SPIRE_SHARE))
     for (let k = 0; k < count && k < order.length; k++) {
       const i = order[k]!
-      if (buildings[i]!.top >= 12) spires.add(i)
+      if (buildings[i]!.top >= Math.max(4, maxTopOf(buildings) * 0.6)) spires.add(i)
     }
   }
 
   let scale = 1
-  let plan = buildPlan({ buildings, keepScale: scale, dist, maxDist, spires })
+  const maxTop = buildings.reduce((m, b) => Math.max(m, b.top), 0)
+  const midTop = Math.min(MID_TOP, Math.max(1.8, maxTop * 0.3))
+  const tallTop = Math.min(TALL_TOP, Math.max(midTop + 1, maxTop * 0.6))
+  const base = { buildings, dist, maxDist, spires, midTop, tallTop }
+  let plan = buildPlan({ ...base, keepScale: scale })
   let total = rooftopCount(plan)
   // Thinning is not linear in the scale (each item is a threshold test), so the scale is corrected by the ratio.
   for (let pass = 0; pass < 6 && total > budget; pass++) {
     scale = Math.min(1, scale * (budget / total) * 0.97)
-    plan = buildPlan({ buildings, keepScale: scale, dist, maxDist, spires })
+    plan = buildPlan({ ...base, keepScale: scale })
     total = rooftopCount(plan)
   }
   return total > budget ? truncate(plan, budget) : plan
