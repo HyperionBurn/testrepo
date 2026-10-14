@@ -5,9 +5,9 @@
 // Neon blades and marquees share one material. Three draw calls in all. Reduced motion freezes the animation and
 // keeps the data at a slower refresh.
 import { useEffect, useMemo, useRef } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useFrame, useThree } from '@react-three/fiber'
 import {
-  BufferAttribute, CanvasTexture, Color, DoubleSide, InstancedBufferAttribute, InstancedMesh, LinearFilter, Matrix4,
+  BufferAttribute, CanvasTexture, Color, DoubleSide, InstancedBufferAttribute, InstancedMesh, LinearMipmapLinearFilter, LinearFilter, Matrix4,
   PlaneGeometry, Quaternion, ShaderMaterial, SRGBColorSpace, Vector3, Euler, type Texture
 } from 'three'
 import type { AgentInfo, AgentEvent } from '@shared/types'
@@ -40,16 +40,18 @@ interface Atlas {
   tex: CanvasTexture;
 }
 
-function makeAtlas(): Atlas {
+/** Mipmapped and anisotropic, so a distant billboard averages its LED dots instead of speckling. */
+function makeAtlas(maxAniso: number): Atlas {
   const canvas = document.createElement('canvas')
   canvas.width = canvas.height = ATLAS_PX
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('2d canvas unavailable')
   const tex = new CanvasTexture(canvas)
   tex.colorSpace = SRGBColorSpace
-  tex.generateMipmaps = false
-  tex.minFilter = LinearFilter
+  tex.generateMipmaps = true
+  tex.minFilter = LinearMipmapLinearFilter
   tex.magFilter = LinearFilter
+  tex.anisotropy = Math.min(4, Math.max(1, maxAniso))
   return { canvas, ctx, tex }
 }
 
@@ -203,8 +205,13 @@ void main() {
     float on = step(0.45, h21(cell + vec2(vSeed * 71.0, 3.0)));
     float run = step(0.3, h21(vec2(floor(cell.x / 6.0), vSeed * 19.0)));
     float dot = 1.0 - smoothstep(0.28, 0.42, length(f));
+    // A dot smaller than a pixel averages to its lit share, so distant boards glow instead of crawling.
+    vec2 fwL = fwidth(g);
+    float fadeL = smoothstep(0.3, 0.7, max(fwL.x, fwL.y));
+    // Coverage: the dot where the dots are resolved, their average (lit share times dot area) where they are not.
+    float covL = mix(dot * on, 0.16, fadeL) * run;
     vec3 led = mix(vec3(1.0, 0.72, 0.28), vec3(1.0, 0.25, 0.25), step(0.72, h21(vec2(floor(cell.x / 9.0), 7.0 + vSeed))));
-    col = mix(col, led * 2.2, dot * on * run);
+    col = mix(col, led * 2.2, covL);
   } else {
     col = col * (1.0 - tex.a) + tex.rgb * tex.a;
     // Animated colour bars at the right edge of the live area.
@@ -276,7 +283,9 @@ void main() {
     vec2 f = fract(g) - 0.5;
     float on = step(0.42, h21(cell + vec2(vSeed * 31.0, 1.0)));
     float dot = 1.0 - smoothstep(0.25, 0.42, length(f));
-    col = vColor * (dot * on * 2.4 + 0.05);
+    vec2 fwM = fwidth(g);
+    float covM = mix(dot * on, 0.16, smoothstep(0.3, 0.7, max(fwM.x, fwM.y)));
+    col = vColor * (covM * 2.4 + 0.05);
   }
   gl_FragColor = vec4(col, 1.0);
 }`
@@ -383,7 +392,11 @@ export function Signage() {
   const layout = useSky((s) => s.layout)
   const reduced = useSky((s) => s.reducedMotion)
   const plan = useMemo(() => (layout ? signsFor(layout) : null), [layout])
-  const atlases = useMemo(() => [makeAtlas(), makeAtlas()], [])
+  const gl = useThree((s) => s.gl)
+  const atlases = useMemo(() => {
+    const maxAniso = gl.capabilities.getMaxAnisotropy()
+    return [makeAtlas(maxAniso), makeAtlas(maxAniso)]
+  }, [gl])
   const shared = useMemo(() => ({ uTime: { value: 0 }, uStatic: { value: reduced ? 1 : 0 } }), [reduced])
   const built = useMemo(() => (plan ? buildSignMeshes(plan, atlases, shared) : null), [plan, atlases, shared])
   const lastDraw = useRef(0)

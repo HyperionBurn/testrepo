@@ -37,3 +37,30 @@ describe('building materials and the emissive atlas', () => {
     expect(m.emissiveMap).toBeNull()
   })
 })
+
+describe('facade shader (street-level anti-aliasing)', () => {
+  function facadeFrag(): string {
+    const { facade } = createBuildingMaterials()
+    const shader = { uniforms: {}, vertexShader: '#include <common>\n#include <begin_vertex>', fragmentShader: FRAGMENT }
+    facade.onBeforeCompile(shader as never, null as never)
+    return shader.fragmentShader
+  }
+
+  it('fades panes to their average on screen-space derivatives, never a per-texel hash', () => {
+    const src = facadeFrag()
+    expect(src).toContain('fDetail = 1.0 - smoothstep(0.22, 0.45')
+    expect(src).not.toMatch(/fhash\(vec3\(floor\(tex\)/)
+  })
+
+  it('takes the far average from one colour per building, not the colour of the pane under the pixel', () => {
+    const src = facadeFrag()
+    expect(src).toContain('fAvgWin')
+    expect(src).not.toMatch(/fWinCol \* 0\.4/)
+  })
+
+  it('keeps pane emission under 1.2 intensity', () => {
+    const src = facadeFrag()
+    expect(src).toMatch(/mix\(fAvgWin, fWinCol, fDetail\) \* 0\.8 \* fMask/)
+    expect(src).toMatch(/winCol \*= 0\.7 \+ 0\.6 \*/)
+  })
+})

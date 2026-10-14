@@ -1,8 +1,10 @@
-// Bridges: two suspension bridges that cross the rivers, from the far banks to the island edge. Each has two stone towers
-// on piers in the water (Brooklyn-style: pointed Gothic arches cut as dark boxes), main and side cables with suspenders
-// as thin line segments, a steel deck with rails, a row of sodium lamps along both edges, lit cable points, and cars that
-// run along the deck on two lanes (headlights one way, tail lights the other). Static geometry is built once; only the car
-// points move, on the shared clock. Four draw calls per bridge. Holds still under reduced motion.
+// Bridges: two Brooklyn-style suspension bridges that cross the rivers, from the far banks to the island edge. Each has two
+// towers on piers in the water. A tower is two dark warm-stone legs with two pointed Gothic arches on each face, a
+// cross-bracing band and a pinnacle; warm uplights from the water and the deck light the lower stone. The main cables are
+// true catenaries between the tower saddles, with side spans down to the anchorages, and vertical suspenders. A lit string
+// of cable lights follows the cables. The deck has steel rails and a row of sodium lamps on each edge, and cars run along
+// two lanes (headlights one way, tail lights the other). Static geometry is built once; only the car points move, on the
+// shared clock. Four draw calls per bridge, eight in all. Holds still under reduced motion.
 import { useEffect, useMemo } from 'react'
 import {
   AdditiveBlending, BoxGeometry, BufferAttribute, BufferGeometry, Color, Float32BufferAttribute, LineBasicMaterial,
@@ -14,12 +16,16 @@ import { useSky } from '../state/store'
 import { BRIDGES, type BridgeSpec } from './metro'
 
 const SUN = [0.4, 0.8, 0.3] as const
-const STONE = new Color('#2a2724')
-const STEEL = new Color('#15171d')
-const ARCH = new Color('#040507')
+/** Dark warm stone (brownstone and granite at night), not blue. */
+const STONE = new Color('#4b3c2f')
+const STEEL = new Color('#1d1d22')
+const ARCH = new Color('#0a0705')
+const UPLIGHT = [1.0, 0.62, 0.3] as const
 const CARS_PER_LANE = 16
-/** Metres per second along the deck, in deck units: a car crosses a 600 unit bridge in about 50 seconds. */
+/** Deck units per second along the deck, scaled by delta: a car crosses a 600 unit bridge in about 50 seconds. */
 const CAR_SPEED = 0.018
+/** Spacing of the lit cable string, in deck units. */
+const CABLE_LIGHT_STEP = 6
 
 /** A box with per-vertex colour: the base colour, shaded by face direction (the material is unlit). */
 export function colouredBox(x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, base: Color): BufferGeometry {
@@ -39,7 +45,7 @@ export function colouredBox(x0: number, x1: number, y0: number, y1: number, z0: 
   return g
 }
 
-/** A Gothic opening on a face at x = fx (facing +/-x): a dark rectangle with a pointed head made of a rotated box. */
+/** A pointed Gothic opening on a face at x = fx (facing +/-x): a dark rectangle with a pointed head made of a rotated box. */
 function archOn(fx: number, z: number, y: number, dir: number): BufferGeometry[] {
   const t = 0.6
   const x0 = dir > 0 ? fx : fx - t
@@ -60,7 +66,21 @@ function archOn(fx: number, z: number, y: number, dir: number): BufferGeometry[]
   return [body, head]
 }
 
-/** Towers, deck and rails of one bridge, as one vertex-coloured mesh. */
+/** Adds the warm uplights to the stone: strongest at the water (the piers) and at the deck (the tower bases). */
+function addUplight(g: BufferGeometry, b: BridgeSpec): void {
+  const pos = g.getAttribute('position') as BufferAttribute
+  const col = g.getAttribute('color') as BufferAttribute
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i)
+    const fromWater = Math.exp(-(y + 3) / 8)
+    const fromDeck = y >= b.deckY ? Math.exp(-(y - b.deckY) / 14) : 0
+    const k = 0.42 * Math.max(fromWater, fromDeck)
+    col.setXYZ(i, col.getX(i) + UPLIGHT[0] * k, col.getY(i) + UPLIGHT[1] * k, col.getZ(i) + UPLIGHT[2] * k)
+  }
+  col.needsUpdate = true
+}
+
+/** Towers, deck, rails and piers of one bridge, as one vertex-coloured mesh. */
 function structure(b: BridgeSpec): BufferGeometry {
   const parts: BufferGeometry[] = []
   const legZ = b.halfW + 2.5
@@ -69,15 +89,17 @@ function structure(b: BridgeSpec): BufferGeometry {
     parts.push(colouredBox(tx - 9, tx + 9, -3, b.deckY + 1, b.deckZ - legZ - 3, b.deckZ + legZ + 3, STONE))
     for (const sz of [-1, 1]) {
       const z = b.deckZ + sz * legZ
+      // Each tower leg: a stone shaft from the deck to the top, with two pointed arches on each face (Brooklyn style).
       parts.push(colouredBox(tx - 3.5, tx + 3.5, b.deckY, b.towerH, z - 2.2, z + 2.2, STONE))
-      // Gothic arches on the two faces that a viewer on the island or the far bank sees.
       for (const dir of [-1, 1]) {
         const fx = tx + dir * 3.5
-        parts.push(...archOn(fx, z, b.deckY + 18, dir), ...archOn(fx, z, b.deckY + 56, dir))
+        parts.push(...archOn(fx, z, b.deckY + 14, dir), ...archOn(fx, z, b.deckY + 52, dir))
       }
+      // Pinnacle on each leg.
+      parts.push(colouredBox(tx - 2.2, tx + 2.2, b.towerH, b.towerH + 7, z - 1.6, z + 1.6, STONE))
     }
-    // Cross bracing and a top saddle.
-    parts.push(colouredBox(tx - 4, tx + 4, b.towerH - 7, b.towerH, b.deckZ - legZ - 0.5, b.deckZ + legZ + 0.5, STONE))
+    // Cross bracing between the legs, and a top saddle that carries the cables.
+    parts.push(colouredBox(tx - 4, tx + 4, b.towerH - 7, b.towerH - 3, b.deckZ - legZ - 0.5, b.deckZ + legZ + 0.5, STONE))
     parts.push(colouredBox(tx - 3, tx + 3, b.deckY + 40, b.deckY + 44, b.deckZ - legZ, b.deckZ + legZ, STONE))
   }
   // Deck slab and rails along the whole span.
@@ -86,56 +108,75 @@ function structure(b: BridgeSpec): BufferGeometry {
     const z = b.deckZ + sz * (b.halfW - 0.4)
     parts.push(colouredBox(b.x0, b.x1, b.deckY, b.deckY + 1.6, z - 0.4, z + 0.4, STEEL))
   }
-  // Four slim hangers' piers on each end (abutments) so the deck does not end in mid-air.
+  // Abutments at each end, so the deck does not end in mid-air.
   for (const ax of [b.x0, b.x1]) {
     parts.push(colouredBox(ax - 6, ax + 6, b.deckY - 30, b.deckY - 2.2, b.deckZ - b.halfW, b.deckZ + b.halfW, STONE))
   }
   const merged = mergeGeometries(parts.map((p) => p.toNonIndexed()))
-  return merged ?? new BufferGeometry()
+  if (!merged) return new BufferGeometry()
+  addUplight(merged, b)
+  return merged
 }
 
-/** Cable height at x: parabolic main span between the towers, a straight-ish slope to each deck end. */
-function cableY(b: BridgeSpec, x: number): number {
-  const [ta, tb] = b.towers
-  const lo = Math.min(ta, tb)
-  const hi = Math.max(ta, tb)
-  const mid = (lo + hi) / 2
+/** Main span: the tower saddles and the low point between them. */
+function mainSpan(b: BridgeSpec): { lo: number; hi: number; low: number; top: number; a: number } {
+  const lo = Math.min(...b.towers)
+  const hi = Math.max(...b.towers)
   const half = (hi - lo) / 2
-  const sag = b.deckY + 10
-  if (x >= lo && x <= hi) {
-    const t = (x - mid) / half
-    return sag + (b.towerH - sag) * t * t
+  const top = b.towerH - 3
+  const low = b.deckY + 12
+  const H = top - low
+  // Catenary y = low + a (cosh((x - xm) / a) - 1): solve for a so the cable meets the saddle at x = lo and hi.
+  let L = Math.log(half / 50)
+  let R = Math.log(1e6)
+  for (let it = 0; it < 90; it++) {
+    const m = (L + R) / 2
+    const a = Math.exp(m)
+    const f = a * (Math.cosh(half / a) - 1) - H
+    if (f > 0) L = m
+    else R = m
   }
+  return { lo, hi, low, top, a: Math.exp((L + R) / 2) }
+}
+
+/** Cable height at x: a catenary across the main span, and a curve from each saddle down to its anchorage. */
+function cableY(b: BridgeSpec, span: ReturnType<typeof mainSpan>, x: number): number {
+  const { lo, hi, low, top, a } = span
+  if (x >= lo && x <= hi) {
+    const xm = (lo + hi) / 2
+    return low + a * (Math.cosh((x - xm) / a) - 1)
+  }
+  const anchor = b.deckY + 6
   const end = x < lo ? b.x0 : b.x1
   const tower = x < lo ? lo : hi
-  const s = Math.min(1, Math.abs(x - end) / Math.abs(tower - end))
-  return b.deckY + 2 + (b.towerH - b.deckY - 2) * (1 - s) ** 2
+  const t = Math.min(1, Math.abs(x - end) / Math.abs(tower - end))
+  return anchor + (top - anchor) * t * t
 }
 
-/** Cable lines (both sides, main and side spans) and suspenders, as LineSegments. */
+/** Main and side cables (both sides), suspenders, and the cable-light string (as points). */
 function cableLines(b: BridgeSpec): { geo: BufferGeometry; points: Float32Array } {
   const pos: number[] = []
   const col: number[] = []
-  const cableCol: [number, number, number] = [0.5, 0.52, 0.56]
-  const hanger: [number, number, number] = [0.3, 0.32, 0.36]
-  const N = 160
+  const cableCol: [number, number, number] = [0.42, 0.42, 0.45]
+  const hanger: [number, number, number] = [0.2, 0.2, 0.22]
+  const N = 200
   const lights: number[] = []
+  const span = mainSpan(b)
   for (const sz of [-1, 1]) {
     const z = b.deckZ + sz * (b.halfW + 1.5)
     for (let i = 0; i < N; i++) {
       const x0 = b.x0 + ((b.x1 - b.x0) * i) / N
       const x1 = b.x0 + ((b.x1 - b.x0) * (i + 1)) / N
-      pos.push(x0, cableY(b, x0), z, x1, cableY(b, x1), z)
+      pos.push(x0, cableY(b, span, x0), z, x1, cableY(b, span, x1), z)
       col.push(...cableCol, ...cableCol)
     }
-    // Suspenders: vertical lines from the cable down to the deck every 12 units across the main span.
-    const [ta, tb] = b.towers
-    for (let x = Math.min(ta, tb); x <= Math.max(ta, tb); x += 12) {
-      pos.push(x, cableY(b, x), z, x, b.deckY, z)
+    // Suspenders: vertical lines from the main cable down to the deck every 9 units across the main span.
+    for (let x = span.lo; x <= span.hi; x += 9) {
+      pos.push(x, cableY(b, span, x), z, x, b.deckY, z)
       col.push(...hanger, ...hanger)
     }
-    // Lit cable points every 20 units.
-    for (let x = b.x0; x <= b.x1; x += 20) lights.push(x, cableY(b, x) + 0.6, z)
+    // The lit cable string: a light every few units along the main span and the side spans.
+    for (let x = b.x0; x <= b.x1; x += CABLE_LIGHT_STEP) lights.push(x, cableY(b, span, x) + 0.6, z)
   }
   const geo = new BufferGeometry()
   geo.setAttribute('position', new Float32BufferAttribute(pos, 3))
@@ -143,7 +184,7 @@ function cableLines(b: BridgeSpec): { geo: BufferGeometry; points: Float32Array 
   return { geo, points: new Float32Array(lights) }
 }
 
-/** Sodium lamps on both deck edges, plus the cable lights, as one Points object. */
+/** Sodium lamps on both deck edges, plus the cable-light string, as one Points object. */
 function lampPoints(b: BridgeSpec, cable: Float32Array): BufferGeometry {
   const pos: number[] = []
   const col: number[] = []
@@ -156,7 +197,7 @@ function lampPoints(b: BridgeSpec, cable: Float32Array): BufferGeometry {
   }
   for (let i = 0; i < cable.length; i += 3) {
     pos.push(cable[i]!, cable[i + 1]!, cable[i + 2]!)
-    col.push(0.7, 0.9, 1.0)
+    col.push(1.0, 0.86, 0.6)
   }
   const g = new BufferGeometry()
   g.setAttribute('position', new Float32BufferAttribute(pos, 3))
@@ -199,17 +240,17 @@ function BridgeMesh({ b, index }: { b: BridgeSpec; index: number }) {
   const reduced = useSky((s) => s.reducedMotion)
   const built = useMemo(() => {
     const structureGeo = structure(b)
-    const structureMesh = new Mesh(structureGeo, new MeshBasicMaterial({ vertexColors: true, toneMapped: false }))
+    const structureMesh = new Mesh(structureGeo, new MeshBasicMaterial({ vertexColors: true, toneMapped: false, fog: false }))
     structureMesh.frustumCulled = false
     const cables = cableLines(b)
-    const cableMesh = new LineSegments(cables.geo, new LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, toneMapped: false }))
+    const cableMesh = new LineSegments(cables.geo, new LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, toneMapped: false, fog: false }))
     cableMesh.frustumCulled = false
     const lampGeo = lampPoints(b, cables.points)
-    const lampMat = new PointsMaterial({ size: 3.2, sizeAttenuation: false, vertexColors: true, toneMapped: false, transparent: true, depthWrite: false, blending: AdditiveBlending })
+    const lampMat = new PointsMaterial({ size: 3.2, sizeAttenuation: false, vertexColors: true, toneMapped: false, transparent: true, depthWrite: false, blending: AdditiveBlending, fog: false })
     const lampObj = new Points(lampGeo, lampMat)
     lampObj.frustumCulled = false
     const cars = makeCars(b, 1234 + index * 97)
-    const carMat = new PointsMaterial({ size: 3.6, sizeAttenuation: false, vertexColors: true, toneMapped: false, transparent: true, depthWrite: false, blending: AdditiveBlending })
+    const carMat = new PointsMaterial({ size: 3.6, sizeAttenuation: false, vertexColors: true, toneMapped: false, transparent: true, depthWrite: false, blending: AdditiveBlending, fog: false })
     const carObj = new Points(cars.geo, carMat)
     carObj.frustumCulled = false
     return { structureMesh, cableMesh, lampObj, carObj, cars, carMat, lampMat, cableGeo: cables.geo, lampGeo, structureGeo }

@@ -182,16 +182,36 @@ float fLit;
 float fLitA;
 float fWinArea;
 vec3 fWinCol;
+vec3 fAvgWin;
+vec3 fEmitSF;
+float fRim;
 float fhash(vec3 p) {
   p = fract(p * 0.1031);
   p += dot(p, p.zyx + 31.32);
   return fract((p.x + p.y) * p.z);
 }
+// 2D value noise in [0, 1] keyed by the building seed. Smooth, so it never speckles.
+float fvn(vec2 p) {
+  vec2 i = floor(p);
+  vec2 u = fract(p);
+  u = u * u * (3.0 - 2.0 * u);
+  float a = fhash(vec3(i, vSeed * 17.0));
+  float b = fhash(vec3(i + vec2(1.0, 0.0), vSeed * 17.0));
+  float c = fhash(vec3(i + vec2(0.0, 1.0), vSeed * 17.0));
+  float d = fhash(vec3(i + vec2(1.0, 1.0), vSeed * 17.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
 `
 
 // Walls and window panes. Palette by seed: brown brick, grey concrete, limestone, black glass, blue-grey glass.
+// Everything here is analytic and anti-aliased: smoothstep over fwidth on world-space coordinates, never a per-pixel
+// hash. Walls get mottling (value noise on albedo only), analytic ambient occlusion at the ground, at tier ledges and
+// in the corners, pilaster lines, a cornice shadow, and a shopfront band (glass, neon sign strips, awnings).
 const FACADE_FRAG_COLOR = `
 #include <color_fragment>
+float isXFc = (abs(vFaceId - 1.0) < 0.5 || abs(vFaceId - 3.0) < 0.5) ? 1.0 : 0.0;
+float sideW = mix(vSize.x, vSize.z, isXFc);
+float isRoofF = step(3.5, vFaceId);
 float pal = floor(fhash(vec3(vSeed * 91.7, 3.1, 7.7)) * 5.0);
 vec3 wall = pal < 0.5 ? vec3(0.10, 0.055, 0.04)
   : pal < 1.5 ? vec3(0.085, 0.085, 0.09)
@@ -200,19 +220,36 @@ vec3 wall = pal < 0.5 ? vec3(0.10, 0.055, 0.04)
   : vec3(0.045, 0.06, 0.085);
 float glassy = step(2.5, pal);
 wall *= 0.86 + 0.28 * fhash(vec3(vSeed * 11.3, 1.0, 2.0));
-// Brick and concrete grain, faded out where a texel is smaller than a pixel.
-vec2 tex = vec2(vU * 14.0, vY * 22.0);
-vec2 fwT = fwidth(tex);
-float texFade = (1.0 - smoothstep(0.4, 0.9, max(fwT.x, fwT.y))) * (1.0 - glassy);
-wall *= mix(1.0, 0.92 + 0.12 * fhash(vec3(floor(tex), vSeed)), texFade);
+// Mottling: a broad octave always, a fine octave only where its texels are wider than a pixel.
+float mot1 = fvn(vec2(vU * 6.0, vY * 9.0)) - 0.5;
+vec2 texF = vec2(vU * 40.0, vY * 60.0);
+float fineFade = 1.0 - smoothstep(0.3, 0.8, max(fwidth(texF.x), fwidth(texF.y)));
+float mot2 = fvn(texF) - 0.5;
+wall *= 1.0 + (0.16 * mot1 + 0.07 * mot2 * fineFade) * (1.0 - glassy);
 
+// Analytic ambient occlusion: darker at the ground, under a tier ledge, and in the vertical corners.
+float cornerD = min(vU, sideW - vU);
+float aoG = mix(0.5, 1.0, smoothstep(0.0, 0.6, vY));
+float aoC = mix(0.6, 1.0, smoothstep(0.0, 0.35, cornerD));
+float aoL = mix(0.6, 1.0, smoothstep(0.0, 0.3, vY - vTierBot * vSize.y));
+float aoAll = clamp(aoG * aoC * aoL, 0.0, 1.0);
+// Thin pilaster lines every few units along the face, and the shadow a cornice throws below its tier top.
+float pilD = abs(fract(vU / 3.2 + 0.5) - 0.5) * 3.2;
+float aaY = fwidth(vY) + 1e-3;
+float pilLine = 1.0 - smoothstep(0.02, 0.04 + fwidth(vU), pilD);
+float dTop = vTierTop * vSize.y - vY;
+float cornShadow = smoothstep(0.03, 0.05 + aaY, dTop) * (1.0 - smoothstep(0.09, 0.14 + aaY, dTop));
+wall *= aoAll * (1.0 - 0.3 * pilLine * (1.0 - isRoofF)) * (1.0 - 0.35 * cornShadow * (1.0 - isRoofF));
+
+// Window grid: one pane per cell, anti-aliased by the pixel footprint of the grid.
 float pitch = mix(0.12, 0.20, fhash(vec3(vSeed * 37.1, 5.0, 2.0)));
-float litA = mix(0.35, 0.55, fhash(vec3(vSeed * 53.3, 1.0, 9.0)));
+float litA = mix(0.2, 0.34, fhash(vec3(vSeed * 53.3, 1.0, 9.0)));
 vec2 g = vec2(vU / pitch, vY / 0.16);
 vec2 cell = floor(g);
 vec2 f = fract(g);
 vec2 fw = max(fwidth(g), vec2(1e-4));
-fDetail = 1.0 - smoothstep(0.28, 0.5, max(fw.x, fw.y));
+// Pane under ~1.5 px: fade to the average. Full detail above ~3 px.
+fDetail = 1.0 - smoothstep(0.22, 0.45, max(fw.x, fw.y));
 float mx0 = mix(0.16, 0.05, glassy);
 float mx1 = 1.0 - mx0;
 float my0 = mix(0.26, 0.05, glassy);
@@ -229,58 +266,85 @@ float hr = fhash(vec3(floor(cell.x / 3.0), cell.y, vSeed * 13.0 + 1.0));
 float hf = fhash(vec3(cell.y, vSeed * 5.0, 3.0));
 float lv = 0.6 * hw + 0.25 * hr + 0.15 * hf;
 float lit = step(1.0 - litA, lv);
-lit = max(lit, step(0.94, hf));
+lit = max(lit, step(0.96, hf));
 lit *= step(0.05, hf);
 // A few panes change slowly: the flicker of a light switched on or off.
 float fl = step(0.985, fhash(vec3(cell, floor(uTime * 0.2 + vSeed * 10.0) + vSeed * 3.0)));
 fLit = abs(lit - fl);
 fLitA = litA + 0.04;
 
-// Warm 2400–3200 K 70 %, cool white 20 %, TV blue 10 %.
+// Warm 2400-3200 K most of the time, a few cool whites and rare TV blues. Each pane varies +-30 %.
 float wc = fhash(vec3(cell * 1.3, vSeed * 2.7 + 4.0));
-// Mostly warm yellow-white, then cool white and a few TV blues; each pane varies +-30 %.
 vec3 warm = mix(vec3(1.0, 0.85, 0.63), vec3(1.0, 0.76, 0.48), fhash(vec3(cell, 9.0 + vSeed)));
-vec3 winCol = wc < 0.72 ? warm : (wc < 0.92 ? vec3(0.86, 0.91, 1.0) : vec3(0.35, 0.6, 1.0));
+vec3 winCol = wc < 0.9 ? warm : (wc < 0.97 ? vec3(0.86, 0.91, 1.0) : vec3(0.4, 0.62, 1.0));
 winCol *= 0.7 + 0.6 * fhash(vec3(cell * 2.1, vSeed * 4.4 + 2.0));
 fWinCol = mix(winCol, vLang, 0.5 * uTint);
+// Far away the panes average out: one colour per building, never the colour of the one pane under the pixel.
+vec3 avgWarm = mix(vec3(1.0, 0.8, 0.52), vec3(1.0, 0.86, 0.66), fhash(vec3(vSeed, 6.0, 1.0)));
+fAvgWin = mix(avgWarm, vLang, 0.5 * uTint);
 
 vec3 glass = mix(vec3(0.012, 0.016, 0.026), vec3(0.03, 0.04, 0.07), glassy);
 float share = mix(fWinArea, fMaskLocal, fDetail);
 vec3 col = mix(wall, glass, share);
 col = mix(col, col * (0.6 + vLang * 1.6), 0.35 * uTint);
-// Shopfront: the ground two floors are dark glass and tile.
-float sfY = 1.0 - smoothstep(0.30, 0.34, vY);
-col = mix(col, vec3(0.02, 0.018, 0.016), sfY * 0.8);
-// Roofs are dark tar.
-col = vFaceId > 3.5 ? vec3(0.022, 0.022, 0.025) : col;
+
+// Shopfront, per bay of about half a unit: a dark tiled base, glass with warm interior light, a neon sign band,
+// and an awning or a plain fascia. Bays are separated by piers. Every edge is anti-aliased over the bay and height.
+float bayU = vU / 0.55;
+float bayId = floor(bayU);
+float bf = fract(bayU);
+float aaB = fwidth(bayU) + 1e-3;
+float bh = fhash(vec3(bayId, vSeed * 3.3, 11.0));
+float bh2 = fhash(vec3(bayId, vSeed * 1.7, 4.0));
+float inBay = smoothstep(0.05 - aaB, 0.05 + aaB, bf) * (1.0 - smoothstep(0.95 - aaB, 0.95 + aaB, bf));
+float zBase = 1.0 - smoothstep(0.02 - aaY, 0.02 + aaY, vY);
+float zGlass = smoothstep(0.02 - aaY, 0.02 + aaY, vY) * (1.0 - smoothstep(0.22 - aaY, 0.22 + aaY, vY));
+float zSign = smoothstep(0.22 - aaY, 0.22 + aaY, vY) * (1.0 - smoothstep(0.27 - aaY, 0.27 + aaY, vY));
+float zAwn = smoothstep(0.27 - aaY, 0.27 + aaY, vY) * (1.0 - smoothstep(0.34 - aaY, 0.34 + aaY, vY));
+float shop = (1.0 - isRoofF);
+vec3 awnCol = bh2 < 0.33 ? vec3(0.09, 0.02, 0.018) : bh2 < 0.66 ? vec3(0.02, 0.06, 0.035) : vec3(0.025, 0.035, 0.07);
+vec3 awnTone = mix(vec3(0.05, 0.045, 0.04), awnCol, step(0.6, bh));
+col = mix(col, vec3(0.018, 0.016, 0.014), zBase * shop * 0.9);
+col = mix(col, vec3(0.012, 0.01, 0.009), zGlass * inBay * shop * 0.85);
+col = mix(col, awnTone, zAwn * inBay * shop * 0.9);
+col = mix(col, vec3(0.03, 0.026, 0.024), zSign * shop * 0.6);
+// Pilaster piers between bays are darker than the glass.
+col = mix(col, wall * 0.6, (1.0 - inBay) * (zGlass + zSign + zAwn) * shop);
+// Shopfront emission for the emission stage: warm interior glow, and sparse neon in a fraction of the bays.
+float signOn = step(bh, 0.36);
+vec3 signCol = bh2 < 0.25 ? vec3(1.0, 0.84, 0.56) : bh2 < 0.45 ? vec3(1.0, 0.14, 0.08) : bh2 < 0.7 ? vec3(0.25, 1.0, 0.42) : vec3(0.25, 0.55, 1.0);
+float signMask = smoothstep(0.08 - aaB, 0.08 + aaB, bf) * (1.0 - smoothstep(0.92 - aaB, 0.92 + aaB, bf));
+fEmitSF = vec3(0.0);
+fEmitSF += vec3(1.0, 0.66, 0.34) * 0.22 * (0.5 + 0.5 * bh2) * zGlass * inBay * shop;
+fEmitSF += signCol * 0.95 * signOn * zSign * signMask * shop;
+fEmitSF += vec3(1.0, 0.7, 0.4) * 0.08 * zSign * shop;
+fRim = (1.0 - isRoofF) * smoothstep(-aaY, aaY, dTop) * (1.0 - smoothstep(0.03, 0.05 + aaY, dTop));
+// Roofs are dark tar with a little mottling.
+col = vFaceId > 3.5 ? vec3(0.022, 0.022, 0.025) * (0.85 + 0.3 * fvn(vec2(vU * 12.0, vSeed * 5.0))) : col;
 diffuseColor.rgb = col;
 `
 
-// Emission: lit panes, unlit glass reflecting the sky, shopfront signs, crown edges, tint glow, heat, selection,
-// hover and the construction scanline. Peak window emission is about 1.5, so bloom takes the windows and not the walls.
+// Emission: lit panes, the averaged far glow, unlit glass reflecting the sky, shopfront light and signs, the cornice
+// rim, tint glow, heat, selection, hover and the construction scanline. Peak window emission is about 1.1, so bloom
+// takes the windows and not the walls.
 const FACADE_FRAG_EMIT = `
 float ndv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
 float fres = pow(1.0 - ndv, 3.0);
 float isRoof = step(3.5, vFaceId);
-// Far away a facade averages to its lit share: a low warm glow over dark walls (about R4's far-band mean), not a flat wash.
-vec3 win = mix(fWinCol * 0.4 * fWinArea * fLitA, fWinCol * 1.2 * fMask * fLit, fDetail) * (1.0 - isRoof);
+// Lit panes in their own warm colour; far away the same panes average to one warm glow per building (fAvgWin).
+// Where a pane is resolved, its own colour and lit flag; where it is not, the averages. Blending both by fDetail keeps a
+// partly-resolved pane from flickering between lit and dark pixels.
+vec3 win = mix(fAvgWin, fWinCol, fDetail) * 0.8 * fMask * mix(fLitA * 0.5, fLit, fDetail) * (1.0 - isRoof);
 vec3 sky = mix(vec3(0.02, 0.03, 0.06), vec3(0.16, 0.13, 0.14), fres);
-vec3 emit = win + sky * fres * fMask * (1.0 - fLit) * fDetail * 0.8 * (1.0 - isRoof);
-// Shopfront band: storefront light and small signs.
-float sfE = 1.0 - smoothstep(0.30, 0.34, vY);
-float sfU = fract(vU / 0.5);
-float sfPane = smoothstep(0.06, 0.12, sfU) * (1.0 - smoothstep(0.88, 0.94, sfU));
-float sh = fhash(vec3(floor(vU / 0.5), vSeed * 3.3, 11.0));
-vec3 neon = sh < 0.22 ? vec3(1.0, 0.2, 0.12) : sh < 0.45 ? vec3(0.9, 0.96, 1.0) : vec3(1.0, 0.62, 0.25);
-emit += sfE * neon * (0.5 + 0.6 * sh) * (0.3 + 0.7 * sfPane) * 0.9;
-// Crown and setback edges, and the parapet line.
-float edgeT = (1.0 - smoothstep(0.0, 0.035, vTierTop - vYFrac)) * (1.0 - isRoof);
-emit += vec3(1.0, 0.72, 0.42) * edgeT * (0.25 + 0.5 * fLitA);
+vec3 emit = win + sky * fres * fMask * (1.0 - fLit) * fDetail * 0.6 * (1.0 - isRoof);
+emit += fEmitSF;
+// Cornice: a thin warm rim light along each tier top.
+emit += vec3(1.0, 0.72, 0.42) * fRim * (0.35 + 0.35 * fLitA);
 // Tint: a soft coloured glow at the base of the facades.
 emit += uTint * vLang * 0.35 * (1.0 - smoothstep(0.0, 0.18, vY)) * (1.0 - isRoof);
 // Heat: the agent's colour pulses through the windows and the crown.
 float pulse = 0.8 + 0.2 * sin(uTime * 5.0 + vSeed * 6.2831);
-emit += vGlowCol * clamp(vGlow, 0.0, 1.0) * pulse * (0.6 + 1.2 * fLit * fMask * fDetail + 1.4 * edgeT + 0.8 * isRoof);
+emit += vGlowCol * clamp(vGlow, 0.0, 1.0) * pulse * (0.6 + 1.2 * fLit * fMask * fDetail + 1.4 * fRim + 0.8 * isRoof);
 float isSel = step(0.75, vSel);
 float hovE = step(0.25, vSel) * (1.0 - step(0.75, vSel));
 emit += vec3(0.8, 0.94, 1.0) * isSel * (0.5 + 2.2 * fres);
@@ -290,6 +354,7 @@ float band = exp(-pow((vY - scanY) / 0.12, 2.0));
 emit += vec3(0.45, 0.82, 1.0) * vShim * (0.15 + 1.8 * band + 0.25 * fres);
 totalEmissiveRadiance = emit;
 `
+
 
 // ---------- boxes (fallback, the previous look) ----------
 

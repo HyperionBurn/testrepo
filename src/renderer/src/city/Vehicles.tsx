@@ -154,10 +154,14 @@ uniform float uGain;
 varying vec2 vUv;
 varying float vFog;
 void main() {
+  // A tapered light cone: narrow at the car (uv.y = 1, the vehicle end) and wider as it reaches down the road
+  // (uv.y = 0). Brightest near the car, fading out with distance along the cone.
   vec2 p = vUv - 0.5;
-  float across = clamp(1.0 - abs(p.x) * 2.0, 0.0, 1.0);
-  float along = clamp(1.0 - abs(p.y) * 2.0, 0.0, 1.0);
-  float a = pow(across, 1.6) * pow(along, 0.9);
+  float far = 1.0 - vUv.y;
+  float halfW = mix(0.32, 0.5, far);
+  float across = clamp(1.0 - abs(p.x) / halfW, 0.0, 1.0);
+  float along = (1.0 - far) * (1.0 - far) * (1.0 - smoothstep(0.55, 1.0, far));
+  float a = pow(across, 1.6) * (0.25 + 0.75 * along);
   vec3 col = uColor * a * uGain * (1.0 - vFog);
   gl_FragColor = vec4(col, 1.0);
 }`

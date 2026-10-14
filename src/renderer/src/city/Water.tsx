@@ -8,9 +8,9 @@ import {
   Mesh, MeshBasicMaterial, PlaneGeometry, Points, PointsMaterial, ShaderMaterial, Vector4
 } from 'three'
 import { FOG_HEX, skyTime } from './Sky'
-import { HAZE_DENSITY, METRO_RADIUS, RIVER_INNER, RIVER_OUTER } from './metro'
+import { BRIDGES, HAZE_DENSITY, METRO_RADIUS, RIVER_INNER, RIVER_OUTER } from './metro'
 
-const LIGHT_COUNT = 32
+const LIGHT_COUNT = 36
 const WATER_Y = 0
 const RIVER_CENTRE = (RIVER_INNER + RIVER_OUTER) / 2
 const RIVER_LEN = 4000
@@ -24,6 +24,10 @@ export function shoreLights(): Array<{ x: number; z: number; i: number }> {
     for (let k = 0; k < 8; k++) {
       out.push({ x: edge + (edge < 0 ? -2 : 2), z: -1400 + k * 400 + (far ? 120 : 0), i: far ? 0.45 : 0.75 })
     }
+  }
+  // Bridge tower bases stand in the water: warm, bright reflections under each tower.
+  for (const b of BRIDGES) {
+    for (const tx of b.towers) out.push({ x: tx, z: b.deckZ, i: 1.0 })
   }
   return out.slice(0, LIGHT_COUNT)
 }
@@ -45,23 +49,28 @@ uniform vec3 uDeep;
 uniform float uFogK;
 varying vec3 vW;
 
-// Four analytic waves: height gradient for the normal, no texture reads.
-vec2 ripple(vec2 p, float t) {
+// Four analytic waves: height gradient for the normal, no texture reads. Each wave fades out once its wavelength is
+// under about 2 to 6 pixels (from the screen derivatives of p), so distant water is smooth and never moires.
+float waveWeight(float k, float px) {
+  return smoothstep(2.0, 6.0, (6.2831853 / k) / px);
+}
+vec2 ripple(vec2 p, float t, float px) {
   vec2 g = vec2(0.0);
   vec2 d1 = vec2(1.0, 0.2); float k1 = 0.35; float a1 = 0.05; float s1 = 0.9;
   vec2 d2 = vec2(-0.3, 1.0); float k2 = 0.52; float a2 = 0.035; float s2 = 1.3;
   vec2 d3 = vec2(0.7, 0.7); float k3 = 1.1; float a3 = 0.018; float s3 = 2.1;
   vec2 d4 = vec2(-0.9, -0.4); float k4 = 2.3; float a4 = 0.008; float s4 = 3.3;
-  g += a1 * k1 * cos(k1 * dot(d1, p) + s1 * t) * d1;
-  g += a2 * k2 * cos(k2 * dot(d2, p) + s2 * t) * d2;
-  g += a3 * k3 * cos(k3 * dot(d3, p) + s3 * t) * d3;
-  g += a4 * k4 * cos(k4 * dot(d4, p) + s4 * t) * d4;
+  g += waveWeight(k1, px) * a1 * k1 * cos(k1 * dot(d1, p) + s1 * t) * d1;
+  g += waveWeight(k2, px) * a2 * k2 * cos(k2 * dot(d2, p) + s2 * t) * d2;
+  g += waveWeight(k3, px) * a3 * k3 * cos(k3 * dot(d3, p) + s3 * t) * d3;
+  g += waveWeight(k4, px) * a4 * k4 * cos(k4 * dot(d4, p) + s4 * t) * d4;
   return g;
 }
 
 void main() {
   vec2 p = vW.xz;
-  vec2 grad = ripple(p, uTime);
+  float px = max(length(fwidth(p)), 1e-4);
+  vec2 grad = ripple(p, uTime, px);
   vec3 n = normalize(vec3(-grad.x, 1.0, -grad.y));
   vec3 V = normalize(cameraPosition - vW);
   vec3 R = reflect(-V, n);

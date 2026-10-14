@@ -4,10 +4,10 @@
 // additive glow layer. With the 'stylized' building style the Kenney road tiles are used instead, as before.
 // The plan is pure (streets.ts) and memoised per layout object; the surface sits at ROAD_Y, above the ground plane.
 import { useEffect, useMemo, useRef } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useFrame, useThree } from '@react-three/fiber'
 import {
   AdditiveBlending, BoxGeometry, BufferGeometry, CanvasTexture, Color, CylinderGeometry, Float32BufferAttribute,
-  Group, InstancedMesh, Material, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, Points, PointsMaterial,
+  Group, InstancedMesh, LinearMipmapLinearFilter, Material, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, Points, PointsMaterial,
   Quaternion, ShaderMaterial, SRGBColorSpace, Texture, Vector3
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
@@ -104,7 +104,7 @@ void main() {
 
   // Wet asphalt: puddles reflect the sky at grazing angles and the lamps as streaks toward the viewer.
   vec3 sodium = vec3(1.0, 0.56, 0.2);
-  float puddle = smoothstep(0.50, 0.63, fbm(p * 0.11 + 3.1)) * uWet;
+  float puddle = smoothstep(0.46, 0.6, fbm(p * 0.11 + 3.1)) * uWet;
   vec3 V = normalize(uCam - vW);
   float cosT = clamp(V.y, 0.0, 1.0);
   float fres = 0.04 + 0.96 * pow(1.0 - cosT, 5.0);
@@ -117,7 +117,7 @@ void main() {
     streak += texture2D(uGlow, (q + 0.5 * uSize) / uSize).r * (1.0 - fk / 6.0);
   }
   vec3 skyRefl = mix(vec3(0.03, 0.05, 0.10), vec3(0.45, 0.22, 0.08), pow(1.0 - cosT, 4.0));
-  vec3 reflCol = sodium * streak * 0.3 + skyRefl;
+  vec3 reflCol = sodium * streak * 0.55 + skyRefl;
 
   vec3 col = base * (1.0 - 0.55 * puddle);
   col += puddle * uWet * fres * reflCol * 1.6;
@@ -186,9 +186,17 @@ interface Procedural {
 }
 
 /** The procedural road for a layout: surface, lamps, lamp glow. Pure data in, three objects out. */
-function buildProcedural(layout: CityLayout, plan: RoadPlan): Procedural {
+function buildProcedural(layout: CityLayout, plan: RoadPlan, maxAniso = 1): Procedural {
   const raster = buildRoadRaster(layout, plan.lights)
   const tex = roadTextures(raster)
+  // Mipmapped and anisotropic (WebGL2 takes any size), so the lane paint and lamp light average out at distance
+  // instead of aliasing into a crawl of dashes.
+  for (const t of [tex.surface, tex.glow]) {
+    t.generateMipmaps = true
+    t.minFilter = LinearMipmapLinearFilter
+    t.anisotropy = Math.min(4, Math.max(1, maxAniso))
+    t.needsUpdate = true
+  }
   const surface = new ShaderMaterial({
     uniforms: {
       uSurf: { value: tex.surface },
@@ -453,7 +461,8 @@ function KenneyRoads({ plan }: { plan: RoadPlan }) {
 
 function ProceduralRoads({ layout, plan }: { layout: CityLayout; plan: RoadPlan }) {
   const root = useSky((s) => s.repo?.root ?? null)
-  const built = useMemo(() => buildProcedural(layout, plan), [layout, plan])
+  const gl = useThree((s) => s.gl)
+  const built = useMemo(() => buildProcedural(layout, plan, gl.capabilities.getMaxAnisotropy()), [layout, plan, gl])
   const host = useRef<Group>(null)
   const lastRoot = useRef<string | null>(null)
   const fade = useRef<number | null>(null)
