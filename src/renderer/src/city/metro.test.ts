@@ -72,7 +72,7 @@ describe('metro plan', () => {
 
   it('stays within the instance budget', () => {
     expect(plan.boxCount).toBeLessThanOrEqual(MAX_LOTS)
-    expect(plan.boxCount).toBeGreaterThanOrEqual(15000)
+    expect(plan.boxCount).toBeGreaterThanOrEqual(40000)
     // Triangle budget: boxes are 12 triangles each (stepped near towers about 3x), light quads 2 each.
     const tris = (plan.tiered.count + plan.spired.count) * 40 + (plan.mid.count + plan.far.count + plan.edge.count) * 12 + plan.lines.quads * 2
     expect(tris).toBeLessThanOrEqual(1_200_000)
@@ -81,22 +81,19 @@ describe('metro plan', () => {
   it('uses the stepped-tier bands only in the near ring', () => {
     for (const key of ['tiered', 'spired'] as const) {
       const s = plan[key]
-      for (let i = 0; i < s.count; i++) expect(Math.hypot(s.pos[i * 3]!, s.pos[i * 3 + 2]!)).toBeLessThan(520)
+      for (let i = 0; i < s.count; i++) expect(Math.hypot(s.pos[i * 3]!, s.pos[i * 3 + 2]!)).toBeLessThan(250)
     }
   })
 
   it('has spiky downtown cores and low edges', () => {
-    const heights = (s: LotSet) => Array.from({ length: s.count }, (_, i) => s.size[i * 3 + 1]!)
-    const nearTall = heights(plan.tiered).concat(heights(plan.spired))
-    const edge = heights(plan.edge)
-    const max = Math.max(...nearTall)
+    const all = allLots(plan)
+    const heightsWhere = (f: (r: number) => boolean) => all.filter((l) => f(Math.hypot(l.x, l.z))).map((l) => l.h)
     const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
-    expect(max).toBeGreaterThan(160)
-    expect(mean(nearTall)).toBeGreaterThan(mean(edge) * 2)
+    const core = heightsWhere((r) => r < 900)
+    const edge = heightsWhere((r) => r > 1400)
+    expect(Math.max(...core)).toBeGreaterThan(160)
+    expect(mean(core)).toBeGreaterThan(mean(edge) * 2)
     expect(mean(edge)).toBeLessThan(40)
-    // The tallest lots cluster around the cores, not at random.
-    const tallNear = allLots(plan).filter((l) => l.h > 150).length
-    expect(tallNear).toBeGreaterThan(0)
   })
 
   it('places cores on the island and clusters across the rivers', () => {

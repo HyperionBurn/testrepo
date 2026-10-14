@@ -29,13 +29,13 @@ export const EXCLUSION_MARGIN = 14
 export const RIVER_INNER = 250
 export const RIVER_OUTER = 700
 /** Upper bound for the instanced boxes of one metropolis. */
-export const MAX_LOTS = 26000
+export const MAX_LOTS = 60000
 /** Length of one light-line segment along an avenue or street. */
 export const LIGHT_SEG = 36
 /** Radial LOD bands (centre distance from the origin). The near band gets the stepped-tier geometry. */
-export const NEAR_RADIUS = 520
-export const MID_RADIUS = 900
-export const FAR_RADIUS = 1300
+export const NEAR_RADIUS = 250
+export const MID_RADIUS = 700
+export const FAR_RADIUS = 1150
 
 export interface Span { x0: number; x1: number; z0: number; z1: number }
 
@@ -237,7 +237,7 @@ function toSet(list: readonly Rec[]): LotSet {
 
 /** Parks: block centres where a noise field runs high are left open. */
 function isPark(uc: number, vc: number, seed: number): boolean {
-  return fbm2(uc / 170, vc / 170, seed ^ 0x3b) > 0.72
+  return fbm2(uc / 170, vc / 170, seed ^ 0x3b) > 0.84
 }
 
 /** Converts a (u, v) grid point to world (x, z). */
@@ -296,7 +296,7 @@ export function buildMetro(opts: MetroOptions): MetroPlan {
   }
 
   // Pass 2: keep a deterministic share so the count lands under the budget.
-  const keepP = Math.min(1, (maxLots * 0.92) / Math.max(1, cands.length))
+  const keepP = Math.min(1, (maxLots * 0.98) / Math.max(1, cands.length))
   const bands: Record<'tiered' | 'spired' | 'mid' | 'far' | 'edge', Rec[]> = { tiered: [], spired: [], mid: [], far: [], edge: [] }
   let kept = 0
   for (const c of cands) {
