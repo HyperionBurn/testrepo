@@ -86,7 +86,7 @@ export default function CityCanvas() {
     <div style={{ position: 'absolute', inset: 0, background: '#03040a', overflow: 'hidden' }}>
       <Canvas
         dpr={captureDpr ?? dpr}
-        camera={{ position: [0, 330, 0.01], fov: 36, near: 0.5, far: 2000 }}
+        camera={{ position: [0, 330, 0.01], fov: 42, near: 0.5, far: 2000 }}
         gl={{
           antialias: true,
           powerPreference: 'high-performance',

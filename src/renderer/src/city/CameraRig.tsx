@@ -15,6 +15,7 @@ import { getDroneVec } from './registry'
 import {
   CAMERA_FOV_DEG,
   DEFAULT_MAX_HEIGHT,
+  framedRegion,
   framePose,
   maxBuildingHeight,
   viewOffset,
@@ -166,10 +167,11 @@ function frameFor(size: { width: number; height: number }): Framed {
   const maxH = s.layout ? maxBuildingHeight(s.layout) : DEFAULT_MAX_HEIGHT
   const key = [size.width, size.height, region.left, region.top, region.right, region.bottom, maxH].join('|')
   if (framedCache && framedCache.key === key) return framedCache
+  const framed = framedRegion(region)
   framedCache = {
     key,
-    pose: toSph(framePose(size, region, maxH)),
-    offset: viewOffset(size, region)
+    pose: toSph(framePose(size, framed, maxH)),
+    offset: viewOffset(size, framed)
   }
   return framedCache
 }

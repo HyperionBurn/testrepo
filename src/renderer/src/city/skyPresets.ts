@@ -54,7 +54,7 @@ export const PRESETS: Record<TimeOfDay, SkyPreset> = {
       hemiGround: '#1a1412',
       key: '#cfe0ff'
     },
-    levels: { star: 0.3, moon: 0.55, band: 1, wisps: 0.8, sheets: 0.7, hazeAmt: 0.7, scatter: 0.5, hemi: 0.5, keyI: 0.9 }
+    levels: { star: 0.3, moon: 0.55, band: 1, wisps: 0.8, sheets: 0.7, hazeAmt: 0.7, scatter: 0.5, hemi: 0.22, keyI: 0.6 }
   },
   // Night, after the Empire State reference: near-black zenith, warm brown-orange light pollution at the horizon.
   night: {
@@ -75,7 +75,7 @@ export const PRESETS: Record<TimeOfDay, SkyPreset> = {
       hemiGround: '#100c08',
       key: '#ffd9a8'
     },
-    levels: { star: 0.12, moon: 0.2, band: 1.9, wisps: 0.4, sheets: 0.5, hazeAmt: 1, scatter: 0.9, hemi: 0.35, keyI: 0.45 }
+    levels: { star: 0.12, moon: 0.2, band: 1.9, wisps: 0.4, sheets: 0.5, hazeAmt: 1, scatter: 0.9, hemi: 0.15, keyI: 0.45 }
   },
   // Dawn: cool lilac overhead, peach at the horizon.
   dawn: {

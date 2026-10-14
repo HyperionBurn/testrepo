@@ -22,9 +22,10 @@ void main() {
   // Plane spans 2 * RADIUS, so d is the distance from the city centre in world units.
   float r = length(vUv - 0.5) * 2.0;
   float d = r * ${RADIUS.toFixed(1)};
-  // A soft sodium pool over ~120 units, a long low tail, and a fade to zero well before the plane's edge.
-  float pool = exp(-d / 120.0) * 0.6 + exp(-d / 260.0) * 0.06;
-  float fall = 1.0 - smoothstep(420.0, 800.0, d);
+  // A soft sodium pool over ~90 units, a faint long tail, and a fade to zero well before the plane's edge. Kept dim:
+  // the asphalt between the lots must stay near black, so the pool reads as light on the ground, not a brown wash.
+  float pool = exp(-d / 90.0) * 0.6 + exp(-d / 220.0) * 0.04;
+  float fall = 1.0 - smoothstep(360.0, 700.0, d);
   vec3 col = uWarm * pool * fall;
   gl_FragColor = vec4(col * uStrength, 1.0);
 }`
@@ -38,7 +39,7 @@ export function GroundGlow() {
   const material = useMemo(() => new ShaderMaterial({
     uniforms: {
       uWarm: { value: new Color('#ff9a4a') },
-      uStrength: { value: 0.3 }
+      uStrength: { value: 0.12 }
     },
     vertexShader: VERT,
     fragmentShader: FRAG,

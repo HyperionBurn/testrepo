@@ -24,10 +24,11 @@ void main() {
   float n = fbm3(vec3(p * uScale + vec2(t, -0.6 * t), uSeed)) * 0.75
     + fbm3(vec3(p * uScale * 2.6 - vec2(1.7 * t, 0.0), uSeed + 5.0)) * 0.25;
   float bank = smoothstep(0.42, 0.8, n);
-  // Street light pools: the haze is brightest over the core and thins out toward the far city.
+  // Street light pools: the haze is brightest over the core and thins out toward the far city. It is kept faint so the
+  // asphalt between the lots stays near black, and it fades out with a long exponential tail (no visible edge).
   float lit = exp(-length(p) * 0.008);
-  float edge = 1.0 - smoothstep(160.0, 520.0, length(p));
-  gl_FragColor = vec4(uHaze * (0.35 + 0.65 * lit), bank * uAlpha * lit * edge);
+  float edge = exp(-length(p) / 260.0);
+  gl_FragColor = vec4(uHaze * (0.35 + 0.65 * lit), 0.5 * bank * uAlpha * lit * edge);
 }`
 
 const HAZE_MID_FRAG = `
@@ -46,9 +47,10 @@ void main() {
   float n = fbm3(vec3(p * uScale + vec2(-t, 0.4 * t), uSeed));
   float bank = smoothstep(0.45, 0.8, n);
   float r = length(p);
-  // Picks up the horizon colour near the far city and the fog colour overhead.
-  vec3 col = mix(uFog, uHorizon, exp(-r * 0.004));
-  float edge = 1.0 - smoothstep(180.0, 620.0, r);
+  // Warm horizon colour all over the city (a blue-grey fog ring showed as a hard blue ring from above), fading out
+  // with a long exponential tail so the plane never shows an edge.
+  vec3 col = mix(uHorizon, uFog, 0.25 + 0.25 * smoothstep(300.0, 900.0, r));
+  float edge = exp(-r / 340.0);
   gl_FragColor = vec4(col, bank * uAlpha * edge);
 }`
 

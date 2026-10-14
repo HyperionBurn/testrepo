@@ -134,9 +134,9 @@ void main() {
   // Pixels per window cell: where a cell is smaller than a pixel, the lit share averages out to its mean.
   vec2 fw = fwidth(g);
   float px = max(fw.x, fw.y);
-  float aa = 1.0 - smoothstep(0.08, 0.45, px);
+  float aa = 1.0 - smoothstep(0.02, 0.14, px);
   // Far away the lit panes average out to one warm tone, so no per-window colour can alias into speckle.
-  vec3 avgCol = vec3(0.95, 0.72, 0.44) * 0.13 * uNight;
+  vec3 avgCol = vec3(0.95, 0.72, 0.44) * (0.04 + 0.06 * uNight);
   // Individual panes stay warm and below 1.2 (no white squares); only the far average is boosted at night.
   vec3 col = wall + winCol * (lit * inten * pane * aa * 0.9 * uWinGain) + avgCol * (1.0 - aa) * uWinGain;
   // Roofs are dark tar. Crowns are lit only on about 15 % of the tallest lots, as a thin warm band on the faces.
@@ -187,7 +187,7 @@ void main() {
   vec3 sodium = mix(vec3(1.0, 0.46, 0.12), vec3(1.0, 0.74, 0.38), 0.4);
   vec3 col = sodium * vBright * edge * flick;
   // Faint wide sodium haze around each street line, so the carpet glows like a night aerial.
-  col += sodium * vBright * 0.1 * uNight * (1.0 - smoothstep(0.3, 1.0, abs(vAcross)));
+  col += sodium * vBright * 0.035 * uNight * (1.0 - smoothstep(0.3, 1.0, abs(vAcross)));
   float dist = length(vW - cameraPosition);
   float fog = 1.0 - exp(-pow(dist * uFogK, 2.0));
   col *= 1.0 - 0.85 * fog;

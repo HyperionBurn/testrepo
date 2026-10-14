@@ -3,6 +3,11 @@ import { CITY_SIZE } from '../../../shared/layout'
 import type { CityLayout } from '../../../shared/types'
 import {
   DEFAULT_MAX_HEIGHT,
+  FRAME_AZIMUTH_DEG,
+  FRAME_ELEVATION_DEG,
+  CAMERA_FOV_DEG,
+  SKY_SHARE,
+  framedRegion,
   framePose,
   maxBuildingHeight,
   projectedExtents,
@@ -54,9 +59,29 @@ describe('framePose', () => {
   const region = visibleRegion(size, 'ui', REPO_UI)
   const pose = framePose(size, region, 30)
 
-  it('sits at 35 degrees of elevation and 45 degrees of azimuth', () => {
-    expect(pose.phi).toBeCloseTo(((90 - 35) * Math.PI) / 180, 10)
-    expect(pose.theta).toBeCloseTo(Math.PI / 4, 10)
+  it('sits at a low oblique: 24 degrees of elevation and 40 degrees of azimuth', () => {
+    expect(FRAME_ELEVATION_DEG).toBe(24)
+    expect(FRAME_AZIMUTH_DEG).toBe(40)
+    expect(pose.phi).toBeCloseTo(((90 - 24) * Math.PI) / 180, 10)
+    expect(pose.theta).toBeCloseTo((40 * Math.PI) / 180, 10)
+  })
+
+  it('shows the horizon in the top of the frame: the view top sits above the horizon', () => {
+    // Angle of the top edge above the horizon: the camera looks down FRAME_ELEVATION, the optical axis sits
+    // above the target by the sky share, and the top edge is half the field of view above the axis.
+    const half = (CAMERA_FOV_DEG * Math.PI) / 360
+    const axisAbove = Math.atan(SKY_SHARE * Math.tan(half))
+    const topEdge = -(FRAME_ELEVATION_DEG * Math.PI) / 180 + axisAbove + half
+    expect(topEdge).toBeGreaterThan(0)
+  })
+
+  it('keeps the top of the free region for sky and horizon, and fits the city into the rest', () => {
+    const framed = framedRegion(region)
+    expect(framed.top).toBeCloseTo(region.top + (region.bottom - region.top) * SKY_SHARE, 10)
+    expect(framed.bottom).toBe(region.bottom)
+    const p = framePose(size, framed, 30)
+    const e = projectedExtents(size, p.phi, p.theta, p.radius, p.target, 30)
+    expect(e!.h).toBeLessThanOrEqual((framed.bottom - framed.top) * 0.94 + 1e-6)
   })
 
   it('centres the city box on the view, even though perspective pushes the near side down', () => {

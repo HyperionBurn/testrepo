@@ -52,7 +52,7 @@ void main() {
   float fine = gridLine(p, 4.0);
   float major = gridLine(p, 20.0);
   vec3 col = uBase;
-  col += uGrid * (fine * 0.10 + major * 0.26) * (0.12 + 0.88 * glow);
+  col += uGrid * (fine * 0.05 + major * 0.12) * (0.12 + 0.88 * glow);
   col += vec3(0.02, 0.05, 0.13) * glow;
   // Beyond the city the plate is faintly mottled, so the ground reads as terrain, not a black void.
   float mott = sin(p.x * 0.013 + sin(p.y * 0.021)) * sin(p.y * 0.011 + 1.3) * 0.5 + 0.5;

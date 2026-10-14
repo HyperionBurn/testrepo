@@ -8,8 +8,11 @@
 // low-rise toward the edge. The rivers, the repo city's square (plus a margin), the bridge corridors and a few parks
 // carry no lots.
 
-/** Angle between the avenues and the repo city's z axis. Rotating a box by +GRID_ANGLE about y lines it up to the grid. */
-export const GRID_ANGLE = (29 * Math.PI) / 180
+/**
+ * Angle between the avenues and the repo city's z axis. Zero: the metropolis grid runs on the same axes as the repo
+ * city's streets, so an avenue visibly carries on from the repo's own roads. Rotating a box by +GRID_ANGLE lines it up.
+ */
+export const GRID_ANGLE = 0
 const CA = Math.cos(GRID_ANGLE)
 const SA = Math.sin(GRID_ANGLE)
 /** Unit direction of the u axis (across the avenues, along the cross streets) in the (x, z) plane. */
@@ -160,7 +163,7 @@ export function lotHeight(x: number, z: number, cores: readonly Core[], seed: nu
   const mask = smooth(0.15, 0.6, sum)
   const r = Math.hypot(x, z)
   // Distance-dependent scale: far towers look as small as near ones, so the repo spire stays the hero.
-  const dScale = 1 + 5 * smooth(250, 1100, r)
+  const dScale = 1 + 3.5 * smooth(250, 1100, r)
   const n2 = hash3(Math.round(x * 4), Math.round(z * 4), 13, seed)
   const M = 3 + 3 * rnd
   let h = M * (1 + mask * (1.2 + 1.8 * n2) * dScale)
@@ -379,8 +382,9 @@ function buildLines(R: number, E: number, seed: number): LineSet {
   /** One full line: an avenue at constant u (runs along v) or a cross street at constant v (runs along u). */
   const emitLine = (fixed: number, avenue: boolean) => {
     const [nx, nz] = avenue ? [U_X, U_Z] : [V_X, V_Z]
-    const hw = avenue ? 2.2 : 1.4
-    const b = avenue ? 1 : 0.9
+    // Thin, continuous lines (a 2 unit avenue, a 1 unit street), flush with the ground.
+    const hw = avenue ? 1.0 : 0.55
+    const b = avenue ? 1 : 0.75
     const lineSeed = hash3(Math.round(fixed * 10), avenue ? 1 : 2, 0, seed ^ 0x5eed)
     for (let s = -R; s < R; s += LIGHT_SEG) {
       const s1 = Math.min(s + LIGHT_SEG, R)

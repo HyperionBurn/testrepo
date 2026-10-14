@@ -204,7 +204,7 @@ wall *= 0.86 + 0.28 * fhash(vec3(vSeed * 11.3, 1.0, 2.0));
 vec2 tex = vec2(vU * 14.0, vY * 22.0);
 vec2 fwT = fwidth(tex);
 float texFade = (1.0 - smoothstep(0.4, 0.9, max(fwT.x, fwT.y))) * (1.0 - glassy);
-wall *= mix(1.0, 0.85 + 0.3 * fhash(vec3(floor(tex), vSeed)), texFade);
+wall *= mix(1.0, 0.92 + 0.12 * fhash(vec3(floor(tex), vSeed)), texFade);
 
 float pitch = mix(0.12, 0.20, fhash(vec3(vSeed * 37.1, 5.0, 2.0)));
 float litA = mix(0.35, 0.55, fhash(vec3(vSeed * 53.3, 1.0, 9.0)));

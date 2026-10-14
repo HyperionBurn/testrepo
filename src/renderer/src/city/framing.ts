@@ -5,11 +5,13 @@ import { CITY_SIZE } from '../../../shared/layout'
 import type { CityLayout } from '../../../shared/types'
 import { visHeight } from './geom'
 
-/** Elevation and azimuth of the framed three-quarter view, in degrees. */
-export const FRAME_ELEVATION_DEG = 35
-export const FRAME_AZIMUTH_DEG = 45
+/** Elevation and azimuth of the framed three-quarter view, in degrees. A low oblique: the far city and the sky show. */
+export const FRAME_ELEVATION_DEG = 24
+export const FRAME_AZIMUTH_DEG = 40
+/** Share of the free region at its top kept for sky and the far horizon. The city box fits the rest. */
+export const SKY_SHARE = 0.42
 /** Must match the field of view of the city camera (CityCanvas). */
-export const CAMERA_FOV_DEG = 36
+export const CAMERA_FOV_DEG = 42
 /** Height used before a layout exists (Welcome screen): a typical mid-sized city. */
 export const DEFAULT_MAX_HEIGHT = 24
 /** Share of the free region the city may fill. The rest is breathing room. */
@@ -50,6 +52,14 @@ export function visibleRegion(size: ViewSize, mode: FrameMode, ui: UiState): Rec
   // A window too small for the reserved panels falls back to the whole canvas rather than a sliver.
   if (right - left < 200 || bottom - top < 200) return { left: GAP, top: GAP, right: w - GAP, bottom: h - GAP }
   return { left, top, right, bottom }
+}
+
+/**
+ * The region the city box is fitted into: the free region without its top SKY_SHARE, so the upper part of the frame
+ * keeps the sky, the horizon glow and the far skyline. The view offset and the framing both use this region.
+ */
+export function framedRegion(region: Rect): Rect {
+  return { ...region, top: region.top + (region.bottom - region.top) * SKY_SHARE }
 }
 
 /** Shift of the view so the orbit target (the screen centre, unshifted) lands on the centre of the region. */
@@ -131,7 +141,7 @@ export function projectedExtents(size: ViewSize, phi: number, theta: number, rad
 }
 
 /**
- * The framed pose: 35 degrees up, 45 degrees around, at the smallest distance where the city box fits the region.
+ * The framed pose: 26 degrees up, 40 degrees around, at the smallest distance where the city box fits the region.
  * The target is the box centre, so the orbit pivots on the middle of the city.
  */
 export function framePose(size: ViewSize, region: Rect, maxHeight: number): FramePose {

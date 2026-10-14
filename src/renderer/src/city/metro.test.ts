@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  BRIDGES, MAX_LOTS, METRO_RADIUS, RIVERS, bridgeSpan, buildMetro, hashName, lotHeight, metroCores, overlaps, type LotSet,
+  BRIDGES, GRID_ANGLE, MAX_LOTS, METRO_RADIUS, RIVERS, bridgeSpan, buildMetro, hashName, lotHeight, metroCores, overlaps, type LotSet,
   type MetroPlan, touchesRiver
 } from './metro'
 
@@ -20,8 +20,8 @@ function allLots(plan: MetroPlan): Array<{ x: number; z: number; w: number; h: n
 
 /** Axis-aligned bounds of a lot in world space, from its footprint and the grid rotation. */
 function lotBounds(l: { x: number; z: number; w: number; d: number }): { x0: number; x1: number; z0: number; z1: number } {
-  const c = Math.cos(Math.PI * 29 / 180)
-  const s = Math.sin(Math.PI * 29 / 180)
+  const c = Math.cos(GRID_ANGLE)
+  const s = Math.sin(GRID_ANGLE)
   // Local x runs along U (c, -s), local z along V (s, c).
   const ex = Math.abs(l.w / 2 * c) + Math.abs(l.d / 2 * s)
   const ez = Math.abs(l.w / 2 * s) + Math.abs(l.d / 2 * c)
