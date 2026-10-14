@@ -20,7 +20,7 @@ import { Aircraft, advanceAircraft } from './Aircraft'
 declare global {
   interface Window {
     /** Test hook: simulate `seconds` of traffic and aircraft on the next frame, deterministically. */
-    __skylineTrafficStep?: (seconds: number) => void;
+    __skylineTrafficStep?: (seconds: number) => { total: number; drawn: number };
   }
 }
 
@@ -33,9 +33,9 @@ const CONVOY_SIZE = 3
 /** Cars within this distance of a hot file slow down; the ramp reaches full speed at the edge. */
 const HOT_RADIUS = 4
 const HOT_WINDOW_MS = 90_000
-/** Culling: beyond FAR no car is drawn; beyond MID only every other car. */
-const FAR = 230
-const MID = 130
+/** Culling from the camera: beyond FAR no car is drawn; beyond MID only every other car. The framed view sits ~330 up. */
+const FAR = 520
+const MID = 380
 // Above the tallest plate (0.08 per depth, so depth 4 tops out at 0.32).
 const LIGHT_Y = 0.38
 const SUB_STEP = 1 / 20
@@ -72,12 +72,11 @@ void main() {
   float along = vUv.x;
   float across = clamp(1.0 - abs(vUv.y - 0.5) * 2.0, 0.0, 1.0);
   float core = pow(across, 1.4);
-  float trail = pow(along, 2.2);
-  float head = pow(along, 14.0);
+  // Long-exposure profile: a faint tail that brightens into the head. The last part blooms.
+  float intensity = 0.35 * along + pow(along, 4.0) + 2.5 * pow(along, 18.0);
   vec3 tailCol = vec3(1.0, 0.14, 0.06);
   vec3 col = mix(tailCol, vColor, smoothstep(0.3, 1.0, along));
-  float a = (trail * 0.8 + head * 1.6) * core * vAlpha;
-  gl_FragColor = vec4(col * uGain * (1.0 + 1.5 * head), a);
+  gl_FragColor = vec4(col * uGain * intensity * core * vAlpha, 1.0);
 }`
 
 /** Light-streak palette: head colour per car, weighted. The tail is always red. */
@@ -176,7 +175,7 @@ function buildWorld(layout: CityLayout): World {
     uniforms: {
       uWidth: { value: 0.2 },
       uPxWorld: { value: 0.002 },
-      uGain: { value: 1.9 }
+      uGain: { value: 1.6 }
     },
     vertexShader: VERT,
     fragmentShader: FRAG,
@@ -277,6 +276,8 @@ function simulate(w: World, seconds: number): void {
 }
 
 let pendingAdvance = 0
+/** Last frame's counts, for the test hook. */
+const carStats = { total: 0, drawn: 0 }
 
 function Streets({ layout }: { layout: CityLayout }) {
   const world = useMemo(() => buildWorld(layout), [layout])
@@ -289,6 +290,7 @@ function Streets({ layout }: { layout: CityLayout }) {
     const hook = (seconds: number) => {
       pendingAdvance += Math.max(0, Math.min(seconds, 120))
       advanceAircraft(seconds)
+      return { ...carStats }
     }
     window.__skylineTrafficStep = hook
     return () => {
@@ -363,6 +365,8 @@ function Streets({ layout }: { layout: CityLayout }) {
       w.tint[k * 4 + 3] = fade
       k++
     }
+    carStats.total = v.count
+    carStats.drawn = k
     const g = w.geometry
     g.instanceCount = k
     ;(g.getAttribute('aHead') as InstancedBufferAttribute).needsUpdate = true

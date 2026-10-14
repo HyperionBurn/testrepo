@@ -107,7 +107,7 @@ varying vec3 vN;
 varying vec3 vV;
 void main() {
   float rim = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.2);
-  vec3 col = vC * (0.05 + rim * 1.7) + vec3(0.010, 0.014, 0.028);
+  vec3 col = vC * (0.16 + rim * 2.2) + vec3(0.02, 0.03, 0.05);
   gl_FragColor = vec4(col, vA);
 }`
 

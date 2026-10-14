@@ -239,10 +239,10 @@ export function CameraRig() {
         lastInput.current = performance.now()
         director.pause()
       }
-      // A repo opened (or F pressed): glide to the framing.
+      // F pressed (or a snapshot asks for the framing): the director steps aside. A repo opened: glide to the framing.
+      if (s.frameSeq !== prev.frameSeq) director.pause()
       if (s.frameSeq !== prev.frameSeq || (s.repo !== null && s.repo.root !== prev.repo?.root)) {
         frameWanted.current = true
-        director.pause()
       }
     })
     window.addEventListener('pointerdown', onPointer, true)

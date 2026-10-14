@@ -169,6 +169,8 @@ function cellRange(lo: number, hi: number, origin: number, cell: number, n: numb
 
 /** Streets are free space: outside every LEAF plate and every building footprint (plus a small margin). */
 const BUILDING_MARGIN = 0.2
+/** How far from a leaf plate a free cell may be and still be street (covers gaps up to 3 cells wide). */
+const STREET_REACH = 1.6
 
 function rasterise(layout: CityLayout, cell: number): Grid {
   const n = Math.max(1, Math.round(layout.size / cell))
@@ -194,8 +196,17 @@ function rasterise(layout: CityLayout, cell: number): Grid {
     fill(b.x - BUILDING_MARGIN, b.x + b.w + BUILDING_MARGIN, b.z - BUILDING_MARGIN, b.z + b.d + BUILDING_MARGIN)
   }
 
+  // Streets are the gaps between plates, not the open ground around loose files: a free cell counts only when
+  // it lies within STREET_REACH of a leaf plate (a 2.4 gap is within reach from both sides).
+  const reach = new Uint8Array(n * n)
+  for (const d of layout.districts) {
+    if (parents.has(d.name)) continue
+    const [i0, i1] = cellRange(d.x - STREET_REACH, d.x + d.w + STREET_REACH, origin, cell, n)
+    const [j0, j1] = cellRange(d.z - STREET_REACH, d.z + d.d + STREET_REACH, origin, cell, n)
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) reach[j * n + i] = 1
+  }
   const street = new Uint8Array(n * n)
-  for (let k = 0; k < street.length; k++) street[k] = blocked[k] ? 0 : 1
+  for (let k = 0; k < street.length; k++) street[k] = blocked[k] || !reach[k] ? 0 : 1
 
   // Remove isolated single cells (no street neighbour). Removing one can isolate another, so repeat.
   for (let pass = 0; pass < 8; pass++) {
@@ -225,9 +236,8 @@ const LANE_V = 2 // east column of a 2-wide north-south street: a parallel strai
  * east-west 2-wide street (or the west column of a north-south one) carries the junctions, and the other row
  * is a straight that only links to the centre line. This avoids a T at every cell of a 2-wide street.
  */
-function planOnGrid(layout: CityLayout, cell: number): RoadPlan {
-  const g = rasterise(layout, cell)
-  const { n, street, origin } = g
+function planOnGrid(g: Grid): RoadPlan {
+  const { n, street, origin, cell } = g
   const at = (i: number, j: number) => i >= 0 && j >= 0 && i < n && j < n && street[j * n + i] === 1
 
   const lane = new Uint8Array(n * n)
@@ -305,11 +315,13 @@ function planOnGrid(layout: CityLayout, cell: number): RoadPlan {
 }
 
 /**
- * The road network for a layout: deterministic, pure. Falls back to a 2-unit grid (scaled tiles) when the
- * fine grid would exceed MAX_TILES.
+ * The road network for a layout: deterministic, pure. Every street cell becomes one tile, so the cell count
+ * decides the grid: the fine grid unless it would exceed MAX_TILES, then the 2-unit grid (scaled tiles).
  */
 export function buildRoadPlan(layout: CityLayout): RoadPlan {
-  const fine = planOnGrid(layout, ROAD_CELL)
-  if (fine.tiles.length <= MAX_TILES) return fine
-  return planOnGrid(layout, COARSE_CELL)
+  let g = rasterise(layout, ROAD_CELL)
+  let streets = 0
+  for (const v of g.street) streets += v
+  if (streets > MAX_TILES) g = rasterise(layout, COARSE_CELL)
+  return planOnGrid(g)
 }
