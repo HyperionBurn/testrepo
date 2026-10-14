@@ -1,12 +1,12 @@
-// Night traffic: every car is one additive light streak (white/amber/red/agent-coloured) drawn from a single
-// InstancedBufferGeometry. Positions are updated on the CPU in one frame loop into typed arrays, with no
-// per-frame allocation. Cars slow down near hot files (construction), far cars are culled and mid-range cars
-// are thinned. A new agent sends a delivery convoy from the city edge to its current file's district.
+// Night traffic: every car is one additive light streak (white/amber/red/agent-coloured), drawn as a quad
+// that trails back along its lane. All cars share one dynamic BufferGeometry (four vertices per car, a fixed
+// index buffer), rewritten on the CPU in one frame loop with no per-frame allocation. Far cars are culled and
+// mid-range cars are thinned by drawing a compacted prefix. Cars slow down near hot files (construction).
+// A new agent sends a delivery convoy from the city edge to its current file's district.
 import { useEffect, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import {
-  AdditiveBlending, BufferGeometry, Color, Float32BufferAttribute, InstancedBufferAttribute,
-  InstancedBufferGeometry, Mesh, ShaderMaterial, type PerspectiveCamera
+  AdditiveBlending, BufferAttribute, BufferGeometry, Color, DoubleSide, Mesh, ShaderMaterial, type PerspectiveCamera
 } from 'three'
 import type { AgentInfo, CityLayout } from '@shared/types'
 import { buildingCenter, findBuilding } from '@shared/layout'
@@ -39,9 +39,12 @@ const MID = 380
 // Above the tallest plate (0.08 per depth, so depth 4 tops out at 0.32).
 const LIGHT_Y = 0.38
 const SUB_STEP = 1 / 20
+/** Streak width in world units, and the minimum on screen (about 1.7 px), so distant cars still catch the bloom. */
+const WIDTH = 0.26
+const MIN_PX = 1.7
 
 const VERT = `
-attribute vec3 aHead;
+attribute vec2 aCorner;
 attribute vec3 aTrail;
 attribute vec4 aColor;
 uniform float uWidth;
@@ -50,19 +53,20 @@ varying vec2 vUv;
 varying vec3 vColor;
 varying float vAlpha;
 void main() {
-  vec3 tail = aHead - vec3(aTrail.x, 0.0, aTrail.y) * aTrail.z;
-  vec3 along = mix(tail, aHead, position.x);
-  float dist = length(cameraPosition - aHead);
-  // Never thinner than about 1.7 pixels, so distant streaks still catch the bloom.
-  float w = max(uWidth, dist * uPxWorld * 1.7);
+  vec3 head = position;
+  vec3 tail = head - vec3(aTrail.x, 0.0, aTrail.y) * aTrail.z;
+  vec3 along = mix(tail, head, aCorner.x);
+  float dist = length(cameraPosition - head);
+  float w = max(uWidth, dist * uPxWorld * ${MIN_PX.toFixed(1)});
   vec3 side = vec3(-aTrail.y, 0.0, aTrail.x);
-  vec3 p = along + side * (position.y * w);
-  vUv = vec2(position.x, position.y + 0.5);
+  vec3 p = along + side * (aCorner.y * w);
+  vUv = vec2(aCorner.x, aCorner.y + 0.5);
   vColor = aColor.rgb;
   vAlpha = aColor.a;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`
 
+// Long-exposure profile: a faint tail that brightens into the head. The last part of it blooms.
 const FRAG = `
 uniform float uGain;
 varying vec2 vUv;
@@ -72,7 +76,6 @@ void main() {
   float along = vUv.x;
   float across = clamp(1.0 - abs(vUv.y - 0.5) * 2.0, 0.0, 1.0);
   float core = pow(across, 1.4);
-  // Long-exposure profile: a faint tail that brightens into the head. The last part blooms.
   float intensity = 0.35 * along + pow(along, 4.0) + 2.5 * pow(along, 18.0);
   vec3 tailCol = vec3(1.0, 0.14, 0.06);
   vec3 col = mix(tailCol, vColor, smoothstep(0.3, 1.0, along));
@@ -81,7 +84,6 @@ void main() {
 
 /** Light-streak palette: head colour per car, weighted. The tail is always red. */
 function carColor(r: number, out: Float32Array, o: number): void {
-  // [r, g, b] for heads: warm white, amber, hot red, cyan, magenta.
   let c: [number, number, number]
   if (r < 0.55) c = [1.0, 0.94, 0.84]
   else if (r < 0.75) c = [1.0, 0.55, 0.15]
@@ -114,10 +116,9 @@ interface World {
   edgeNodes: number[];
   /** Next-hop tables by goal node. */
   routes: Map<number, Int32Array>;
-  /** Scratch and instanced buffers. */
   scratch: Float32Array;
-  head: Float32Array; trail: Float32Array; tint: Float32Array;
-  geometry: InstancedBufferGeometry;
+  position: Float32Array; corner: Float32Array; trail: Float32Array; tint: Float32Array;
+  geometry: BufferGeometry;
   material: ShaderMaterial;
   mesh: Mesh;
 }
@@ -130,7 +131,7 @@ function buildWorld(layout: CityLayout): World {
   const vehicles = createVehicles(count, net, rng, 2.6, 5)
   const n = vehicles.count
 
-  const colors = new Float32Array(n * 3)
+  const colors = new Float32Array(Math.max(1, n) * 3)
   for (let i = 0; i < n; i++) carColor(rng(), colors, i * 3)
 
   const segCount = net.segments.length
@@ -160,27 +161,44 @@ function buildWorld(layout: CityLayout): World {
     .filter((nd) => comp[nd.id] === mainComp && (Math.abs(nd.x) > 56 || Math.abs(nd.z) > 56))
     .map((nd) => nd.id)
 
-  const geometry = new InstancedBufferGeometry()
-  geometry.setAttribute('position', new Float32BufferAttribute([0, -0.5, 0, 1, -0.5, 0, 1, 0.5, 0, 0, 0.5, 0], 3))
-  geometry.setIndex([0, 1, 2, 0, 2, 3])
-  const head = new Float32Array(Math.max(1, n) * 3)
-  const trail = new Float32Array(Math.max(1, n) * 3)
-  const tint = new Float32Array(Math.max(1, n) * 4)
-  geometry.setAttribute('aHead', new InstancedBufferAttribute(head, 3))
-  geometry.setAttribute('aTrail', new InstancedBufferAttribute(trail, 3))
-  geometry.setAttribute('aColor', new InstancedBufferAttribute(tint, 4))
-  geometry.instanceCount = 0
+  // Four vertices per car; the index buffer is fixed, and a draw range covers the cars drawn this frame.
+  const cars = Math.max(1, n)
+  const position = new Float32Array(cars * 4 * 3)
+  const corner = new Float32Array(cars * 4 * 2)
+  const trail = new Float32Array(cars * 4 * 3)
+  const tint = new Float32Array(cars * 4 * 4)
+  const index = new Uint16Array(cars * 6)
+  const CORNERS = [0, -0.5, 1, -0.5, 1, 0.5, 0, 0.5]
+  for (let j = 0; j < cars; j++) {
+    for (let c = 0; c < 4; c++) {
+      corner[(j * 4 + c) * 2] = CORNERS[c * 2]!
+      corner[(j * 4 + c) * 2 + 1] = CORNERS[c * 2 + 1]!
+    }
+    const b = j * 4
+    index.set([b, b + 1, b + 2, b, b + 2, b + 3], j * 6)
+  }
+  const geometry = new BufferGeometry()
+  geometry.setAttribute('position', new BufferAttribute(position, 3))
+  geometry.setAttribute('aCorner', new BufferAttribute(corner, 2))
+  geometry.setAttribute('aTrail', new BufferAttribute(trail, 3))
+  geometry.setAttribute('aColor', new BufferAttribute(tint, 4))
+  geometry.setIndex(new BufferAttribute(index, 1))
+  geometry.setDrawRange(0, 0)
 
   const material = new ShaderMaterial({
     uniforms: {
-      uWidth: { value: 0.2 },
+      uWidth: { value: WIDTH },
       uPxWorld: { value: 0.002 },
-      uGain: { value: 1.6 }
+      uGain: { value: 2.2 }
     },
     vertexShader: VERT,
     fragmentShader: FRAG,
     transparent: true,
+    // Light trails read as an overlay, as in a long exposure: the streets sit in narrow gaps between towers.
+    depthTest: false,
     depthWrite: false,
+    // Every quad has the same winding, so FrontSide would cull them all from one side of the city.
+    side: DoubleSide,
     blending: AdditiveBlending
   })
   const mesh = new Mesh(geometry, material)
@@ -193,7 +211,7 @@ function buildWorld(layout: CityLayout): World {
     edgeNodes,
     routes: new Map(),
     scratch: new Float32Array(3),
-    head, trail, tint, geometry, material, mesh
+    position, corner, trail, tint, geometry, material, mesh
   }
 }
 
@@ -225,13 +243,13 @@ function spawnConvoy(w: World, agent: AgentInfo, slot0: number): void {
   const edge = w.edgeNodes[Math.floor(w.rng() * w.edgeNodes.length)]!
   const comp = w.comp[edge]!
   const b = agent.currentFile ? findBuilding(w.layout, agent.currentFile) : undefined
+  const bc = b ? buildingCenter(b) : null
   let goal = -1
   let goalD = Infinity
-  const tx = b ? buildingCenter(b).x : 0
-  const tz = b ? buildingCenter(b).z : 0
   for (const nd of net.nodes) {
     if (w.comp[nd.id] !== comp) continue
-    const d = b ? (nd.x - tx) ** 2 + (nd.z - tz) ** 2 : w.rng() // no file: any node in the district of the edge
+    // Without a file, any node of the edge's component will do.
+    const d = bc ? (nd.x - bc.x) ** 2 + (nd.z - bc.z) ** 2 : w.rng()
     if (d < goalD) {
       goalD = d
       goal = nd.id
@@ -248,10 +266,11 @@ function spawnConvoy(w: World, agent: AgentInfo, slot0: number): void {
   const seg = net.segments[first]!
   const dir = seg.a === edge ? 1 : -1
   const v = w.vehicles
+  const slots = Math.min(CONVOY_SLOTS, v.count)
+  if (slots === 0) return
   const rgb = new Color(agent.color)
   for (let k = 0; k < CONVOY_SIZE; k++) {
-    const slot = (slot0 + k) % Math.max(1, Math.min(CONVOY_SLOTS, v.count))
-    if (slot >= v.count) break
+    const slot = (slot0 + k) % slots
     v.seg[slot] = first
     v.dir[slot] = dir
     v.t[slot] = Math.min(seg.length * 0.5, k * 2.2)
@@ -278,6 +297,32 @@ function simulate(w: World, seconds: number): void {
 let pendingAdvance = 0
 /** Last frame's counts, for the test hook. */
 const carStats = { total: 0, drawn: 0 }
+/** Agents that already sent a convoy. Kept across layouts, so a rescan does not send them again. */
+const seenAgentIds = new Set<string>()
+const convoyCursor = new WeakMap<World, number>()
+const frameNo = new WeakMap<World, number>()
+const lastHeat = new WeakMap<World, Record<string, Heat>>()
+const lastAgents = new WeakMap<World, AgentInfo[]>()
+
+/** Writes car `j` (four vertices) into the buffers. */
+function putCar(
+  w: World, j: number, hx: number, hy: number, hz: number,
+  ux: number, uz: number, len: number, r: number, g: number, b: number, a: number
+): void {
+  for (let c = 0; c < 4; c++) {
+    const v = j * 4 + c
+    w.position[v * 3] = hx
+    w.position[v * 3 + 1] = hy
+    w.position[v * 3 + 2] = hz
+    w.trail[v * 3] = ux
+    w.trail[v * 3 + 1] = uz
+    w.trail[v * 3 + 2] = len
+    w.tint[v * 4] = r
+    w.tint[v * 4 + 1] = g
+    w.tint[v * 4 + 2] = b
+    w.tint[v * 4 + 3] = a
+  }
+}
 
 function Streets({ layout }: { layout: CityLayout }) {
   const world = useMemo(() => buildWorld(layout), [layout])
@@ -301,6 +346,7 @@ function Streets({ layout }: { layout: CityLayout }) {
   useFrame(({ camera, size }, delta) => {
     const w = world
     const st = useSky.getState()
+
     // New agents: send a convoy each, a few per frame at most.
     if (st.agents !== lastAgents.get(w)) {
       lastAgents.set(w, st.agents)
@@ -308,9 +354,10 @@ function Streets({ layout }: { layout: CityLayout }) {
       for (const a of st.agents) {
         if (seenAgentIds.has(a.id) || sent >= 3) continue
         seenAgentIds.add(a.id)
-        if (w.vehicles.count >= 2 * CONVOY_SIZE) {
-          spawnConvoy(w, a, convoyCursor.get(w) ?? 0)
-          convoyCursor.set(w, ((convoyCursor.get(w) ?? 0) + CONVOY_SIZE) % CONVOY_SLOTS)
+        if (w.vehicles.count >= CONVOY_SIZE) {
+          const cursor = convoyCursor.get(w) ?? 0
+          spawnConvoy(w, a, cursor)
+          convoyCursor.set(w, (cursor + CONVOY_SIZE) % Math.max(1, Math.min(CONVOY_SLOTS, w.vehicles.count)))
         }
         sent++
       }
@@ -332,9 +379,8 @@ function Streets({ layout }: { layout: CityLayout }) {
       simulate(w, Math.min(delta, 0.05))
     }
 
-    // Instance buffers, with distance culling.
+    // Vertex data, with distance culling and thinning.
     const cam = camera.position
-    const cx = cam.x, cy = cam.y, cz = cam.z
     const v = w.vehicles
     const net = w.net
     const fov = ((camera as PerspectiveCamera).fov * Math.PI) / 180
@@ -343,47 +389,31 @@ function Streets({ layout }: { layout: CityLayout }) {
     let k = 0
     for (let i = 0; i < v.count; i++) {
       lanePoint(net, v.seg[i]!, v.dir[i]!, v.t[i]!, sc, 0, LIGHT_Y)
-      const dx = sc[0]! - cx
-      const dy = sc[1]! - cy
-      const dz = sc[2]! - cz
+      const dx = sc[0]! - cam.x
+      const dy = sc[1]! - cam.y
+      const dz = sc[2]! - cam.z
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
       if (dist > FAR) continue
       if (dist > MID && (i & 1) === 1) continue
       const fade = 1 - smooth(FAR - 40, FAR, dist)
-      const ux = v.dir[i]! * net.segments[v.seg[i]!]!.ux
-      const uz = v.dir[i]! * net.segments[v.seg[i]!]!.uz
-      const len = 1.4 + v.speed[i]! * 0.5
-      w.head[k * 3] = sc[0]!
-      w.head[k * 3 + 1] = sc[1]!
-      w.head[k * 3 + 2] = sc[2]!
-      w.trail[k * 3] = ux
-      w.trail[k * 3 + 1] = uz
-      w.trail[k * 3 + 2] = len
-      w.tint[k * 4] = w.colors[i * 3]!
-      w.tint[k * 4 + 1] = w.colors[i * 3 + 1]!
-      w.tint[k * 4 + 2] = w.colors[i * 3 + 2]!
-      w.tint[k * 4 + 3] = fade
+      const seg = net.segments[v.seg[i]!]!
+      const ux = v.dir[i]! * seg.ux
+      const uz = v.dir[i]! * seg.uz
+      const len = 3 + v.speed[i]! * 0.9
+      putCar(w, k, sc[0]!, sc[1]!, sc[2]!, ux, uz, len,
+        w.colors[i * 3]!, w.colors[i * 3 + 1]!, w.colors[i * 3 + 2]!, fade)
       k++
     }
     carStats.total = v.count
     carStats.drawn = k
-    const g = w.geometry
-    g.instanceCount = k
-    ;(g.getAttribute('aHead') as InstancedBufferAttribute).needsUpdate = true
-    ;(g.getAttribute('aTrail') as InstancedBufferAttribute).needsUpdate = true
-    ;(g.getAttribute('aColor') as InstancedBufferAttribute).needsUpdate = true
+    w.geometry.setDrawRange(0, k * 6)
+    ;(w.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true
+    ;(w.geometry.getAttribute('aTrail') as BufferAttribute).needsUpdate = true
+    ;(w.geometry.getAttribute('aColor') as BufferAttribute).needsUpdate = true
   })
 
   return <primitive object={world.mesh} />
 }
-
-// Per-world bookkeeping for the frame loop, kept off the component so a layout change starts clean.
-// Agents that already sent a convoy. Kept across layouts, so a rescan does not send them again.
-const seenAgentIds = new Set<string>()
-const lastAgents = new WeakMap<World, AgentInfo[]>()
-const convoyCursor = new WeakMap<World, number>()
-const frameNo = new WeakMap<World, number>()
-const lastHeat = new WeakMap<World, Record<string, Heat>>()
 
 /** Traffic streets and the aircraft above the city. Renders nothing with reduced motion. */
 export function Traffic() {
