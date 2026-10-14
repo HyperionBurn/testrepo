@@ -14,7 +14,8 @@ import {
   type Network, type Rng, type TrafficContext, type VehicleState
 } from './lanes'
 import { Aircraft, advanceAircraft } from './Aircraft'
-import { KIND_TRUCK, VehicleLayer, paintFor, parkedGlow, pickKind, type VehicleFeed } from './Vehicles'
+import { VehicleLayer, parkedGlow, type VehicleFeed } from './Vehicles'
+import { KIND_TRUCK, paintFor, pickKind } from './vehicleKinds'
 import { SignalLayer } from './Signals'
 import { PedestrianLayer } from './Pedestrians'
 

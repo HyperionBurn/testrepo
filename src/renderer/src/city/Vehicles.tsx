@@ -8,10 +8,17 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { lanePoint, type Network, type VehicleState } from './lanes'
 import {
-  HALF_LENGTH, KIND_COUNT, KIND_CAR, KIND_TAXI, KIND_SUV, KIND_TRUCK, KIND_BUS, paintFor
+  HALF_LENGTH, KIND_BUS, KIND_COUNT, KIND_SUV, KIND_TAXI, KIND_TRUCK, KIND_CAR, paintFor
 } from './vehicleKinds'
 import { FOG_DENSITY, FOG_HEX } from './Sky'
 import { ROAD_Y } from './streets'
+
+/** Beyond these camera distances the body (or the road pools) is not drawn; the light glow stays. */
+export const BODY_FAR = 170
+export const POOL_FAR = 110
+/** Light glow fades out between LIGHT_FAR - LIGHT_FADE and LIGHT_FAR. */
+export const LIGHT_FAR = 520
+const LIGHT_FADE = 120
 
 // Part codes, one per vertex: paint, glass, trim, headlamp, tail lamp, lit window or interior.
 const PART = { paint: 0, glass: 1, trim: 2, head: 3, tail: 4, lit: 5 } as const
