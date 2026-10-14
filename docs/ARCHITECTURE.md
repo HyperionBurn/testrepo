@@ -35,7 +35,7 @@ Exposes `window.skyline`, typed as `SkylineAPI` in `src/shared/types.ts`, throug
 |---|---|
 | `state/store.ts` | zustand store: repo snapshot, agents, events, git commits, mode (`live`, `replay`, `git`), selection, focus. |
 | `lib/ui.ts`, `lib/actions.ts` | UI-only state (overlays, scanning, dock tab) and cross-component actions such as open repo and set mode. |
-| `city/` | Three.js scene through React Three Fiber. `CityCanvas` hosts it. `BuildingField` draws every building as one `InstancedMesh` with `buildingShader`. `Drones` moves each agent with a critically damped spring. `Ground`, `Sky`, `Overlays` (scaffolding, spotlight, import arcs), `Effects` (bloom, tone mapping, SMAA, vignette) and `CameraRig` (intro swoop, fly-to, auto-orbit after 25 s idle). `Effects` is mounted only when the GPU keeps up and reduced motion is off. `geom.ts` stretches layout heights for display. |
+| `city/` | Three.js scene through React Three Fiber. `CityCanvas` hosts it. `Buildings` and `BuildingField` draw the repo's buildings (the `stylized` style as one `InstancedMesh` per model, the `real` style from the facade templates). `Drones` moves each agent with a critically damped spring. `Ground`, `Overlays` (scaffolding, spotlight, import arcs), `CameraRig` (intro swoop, fly-to, auto-orbit after 25 s idle) and `Effects` (see v3 below) are the scene's other parts. `geom.ts` stretches layout heights for display. The v3 modules are listed in [Renderer v3](#renderer-v3). |
 | `hud/` | React overlays: `TitleBar`, `AgentDock` (agent cards and activity tab), `Inspector`, `Timeline` (Live / Replay / Time-lapse), `CommandBar`, `DispatchSheet`, `DigestCard`, `Welcome`, `ActivityFeed`, `Toasts`. |
 | `App.tsx` | Keyboard map, digest on return after more than 10 minutes away, and the lazy-loaded city behind a fallback. |
 
@@ -161,6 +161,19 @@ The v2 city replaces the procedural boxes with real models. The design brief is 
 
 Test hooks: `window.__skylineStats()` (calls, triangles, geometries, textures), `window.__skylineFxStep(seconds)`, `window.__skylineTrafficStep(seconds)` and `window.__skylineDirectorStep(dt)`. Verify changes in the built app, because packaged builds load from `file://`.
 
+## Renderer v3
+
+v3 gives the city a New York look. The repo's city keeps its place, and a generated metropolis runs out beyond its square. Modules are in `src/renderer/src/city/` unless noted. Each file's header comment says what it draws and what it costs.
+
+- **Facades (`facade/`).** `skyline.ts` is a pure height field: most files are mid-rise, the top share by LOC are supertall spires, and low-frequency noise lifts whole neighbourhoods together. `templates.ts` builds the unit templates for the `real` style (setbacks, crowns, boxes with per-face tier data). The `stylized` style (key `B`) keeps the Kenney model path.
+- **Metropolis (`metro.ts`, `Metropolis.tsx`, `Water.tsx`, `Bridges.tsx`, `Boats.tsx`, `Helicopters.tsx`, `Aircraft.tsx`, `Glow.tsx`, `Backdrop.tsx`).** `metro.ts` is the pure plan: a Manhattan-style grid of blocks and parcels seeded by the repo name, with parks, light lines and two fixed rivers. `Metropolis.tsx` turns it into a few dozen instanced meshes with one facade shader. `Water.tsx` draws the rivers, `Bridges.tsx` two suspension bridges with cables and cars, `Boats.tsx` eight vessels, `Helicopters.tsx` four craft with searchlights, `Aircraft.tsx` airliners far above, `Glow.tsx` the ground sodium pool and `Backdrop.tsx` the far ridges.
+- **Streets (`roadtex.ts`, `Roads.tsx`, `Vehicles.tsx`, `Signals.tsx`, `Pedestrians.tsx`).** `roadtex.ts` paints the road surface and glow maps on the CPU into two textures per layout. `Vehicles.tsx` draws five vehicle shapes (car, taxi, SUV, truck, bus) and their lights in seven draw calls, using the poses from `Traffic.tsx`. `Signals.tsx` lights one head per approach on the same cycle the cars obey (`lanes.ts`, `signalPhase`). `Pedestrians.tsx` is one point layer.
+- **Rooftops and signage (`roofs.ts`, `Rooftops.tsx`, `signs.ts`, `Signage.tsx`, `Steam.tsx`).** `roofs.ts` plans the clutter (water tanks, AC boxes, bulkheads, vent stacks, masts, spires, dishes, gardens, helipads, beacons). `Rooftops.tsx` instances it. `signs.ts` places the billboards, neon blades and marquees. `Signage.tsx` draws the LED billboards from two canvas atlases, redrawn at 2 Hz with agent, action, cost, tokens and a sparkline. `Steam.tsx` is about 120 vent and manhole emitters in one vertex-shader points layer.
+- **Sky and grade (`skyPresets.ts`, `Sky.tsx`, `Atmosphere.tsx`, `Grade.tsx`, `gradeParams.ts`, `Effects.tsx`).** `skyPresets.ts` holds the three times of day (blue hour, night, dawn). Pressing `T` blends between them over about 2 s. `Sky.tsx` is one dome shader driven by shared colour and level uniforms. `Atmosphere.tsx` adds haze, a scatter dome and cloud sheets. `Grade.tsx` is the cinematic grade (lift, split toning, saturation, grain). `Effects.tsx` chains bloom, halation, ACES tone mapping, the grade, chromatic aberration, vignette and SMAA, and steps its quality down when the frame rate sags.
+- **Framing and the Director (`framing.ts`, `shots.ts`, `Director.tsx`, `CameraRig.tsx`).** `framing.ts` computes the camera pose so the whole city fits the free part of the window. `shots.ts` is pure and picks reveal, orbit, follow, crane or flythrough. `Director.tsx` runs it every frame while `V` is on.
+
+**Budget.** The v3 target is at most 150 draw calls and 4.5 M triangles on screen. Read the live numbers with `window.__skylineStats()`. Two limits are enforced by tests today: `TRI_BUDGET` (3 M triangles for the repo's buildings, `modelPicker.ts`) and 1.2 M triangles for the metropolis plan (`metro.test.ts`). The 150 draw-call and 4.5 M totals are targets that are checked by hand, not by a test.
+
 ## Pricing
 
 Prices live in `src/shared/pricing.ts` as `MODEL_PRICES`, in USD per 1M tokens for input, output, cache read and cache write.
@@ -191,7 +204,7 @@ To add a model, insert an entry in order and add a test case.
 
 | Command | What it does |
 |---|---|
-| `npm test` | Runs the vitest suite (23 files). Covers parsers, the tailer, layout, pricing, git, watchers, dispatch and worktrees, the local model and IPC. |
+| `npm test` | Runs the vitest suite (63 files, 771 tests). Covers parsers, the tailer, layout, pricing, git, watchers, dispatch and worktrees, the local model and IPC. |
 | `npm run typecheck` | Type-checks `tsconfig.node.json` (main, preload, shared) and `tsconfig.web.json` (renderer). |
 | `npm run build` | Bundles main, preload and renderer into `out/` through electron-vite. |
 | `npm run dist:win` | Builds the Windows NSIS installer and portable exe into `release/`. |

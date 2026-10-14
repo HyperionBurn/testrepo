@@ -317,6 +317,10 @@
   .feature-shot--snapshot img { object-fit: cover; object-position: 50% 50%; }
   .feature-shot--night { aspect-ratio: 16 / 10; }
   .feature-shot--night img { object-fit: cover; object-position: 50% 50%; }
+  .feature-shot--skyline { aspect-ratio: 16 / 10; }
+  .feature-shot--skyline img { object-fit: cover; object-position: 50% 60%; }
+  .feature-shot--street { aspect-ratio: 16 / 10; }
+  .feature-shot--street img { object-fit: cover; object-position: 50% 50%; }
 
   /* ---- Privacy --------------------------------------------------------- */
 
@@ -486,7 +490,7 @@
       <p class="fineprint">Windows x64 &middot; Installer or portable &middot; MIT licensed</p>
 
       <figure class="hero-shot glass">
-        <img src="../screenshots/epic-overview.png" width="1440" height="900" alt="Skyline showing a repository as a 3D city of real low-poly buildings, with agent drones flying over active edits, cost popups rising above them and the agent dock on the left." fetchpriority="high">
+        <img src="../screenshots/nyc-blue-overview.png" width="1280" height="900" alt="Skyline's blue-hour view of a repository city: the suspension bridge over the river, lit towers on the island and agent cards in the dock on the left." fetchpriority="high">
       </figure>
     </div>
   </div>
@@ -560,16 +564,46 @@
 
       <article class="feature glass">
         <div class="feature-copy">
-          <h3>A city that lives after dark.</h3>
-          <p>Every file is a real low-poly model. Windows light up pane by pane, cars move along the streets, and the Director camera (press V) cuts between shots while you watch.</p>
+          <h3>A New York that lives after dark.</h3>
+          <p>Every file becomes a facade of dark brick or glass, with warm windows that light up pane by pane. Press T to take the city from blue hour to night, and V for the Director camera.</p>
           <ul>
-            <li>Kenney City Kit models (CC0), drawn as instanced meshes</li>
-            <li>Roads, street lamps and live traffic</li>
-            <li>A moon, an aurora and a far skyline beyond the city edge</li>
+            <li>Setback towers, spires and rooftop water tanks and beacons</li>
+            <li>Live billboards that show each agent's cost as it runs</li>
+            <li>A river, a suspension bridge and helicopters with searchlights</li>
           </ul>
         </div>
         <div class="feature-shot feature-shot--night">
-          <img src="../screenshots/epic-night-reveal.png" width="1440" height="900" loading="lazy" alt="The city at night under an aurora and a moon, with a far skyline of tall towers beyond the city edge and lit windows on the nearer buildings.">
+          <img src="../screenshots/nyc-night-overview.png" width="1280" height="900" loading="lazy" alt="The city at night after dark, with the suspension bridge over the river, lit towers and the agent dock on the left.">
+        </div>
+      </article>
+
+      <article class="feature glass feature--reverse">
+        <div class="feature-copy">
+          <h3>A skyline at dusk, across the river.</h3>
+          <p>Past your repo's square the city runs on: an endless grid with two rivers, boats on the water, and helicopters patrolling above the avenues. Press C to tint it by area, language, churn or age.</p>
+          <ul>
+            <li>Ferries, a tug and sailboats on the rivers</li>
+            <li>Searchlights from helicopters over the streets</li>
+            <li>Color modes on top of the natural look</li>
+          </ul>
+        </div>
+        <div class="feature-shot feature-shot--skyline">
+          <img src="../screenshots/nyc-skyline.png" width="1280" height="900" loading="lazy" alt="The skyline at dusk: far towers in silhouette beyond the river, a helicopter's searchlight over the avenues and the agent dock on the left.">
+        </div>
+      </article>
+
+      <article class="feature glass">
+        <div class="feature-copy">
+          <h3>Wet avenues, live traffic, and signals.</h3>
+          <p>Taxis, buses and trucks drive the lanes, signals change for the cars, and pedestrians cross on red. Press B to switch to the stylized Kenney models.</p>
+          <ul>
+            <li>Taxis, buses and trucks on wet asphalt</li>
+            <li>Signals that follow the traffic cycle</li>
+            <li>Steam from vents and manholes, and cranes on active edits</li>
+          </ul>
+        </div>
+        <div class="feature-shot feature-shot--street">
+          <img src="../screenshots/nyc-street-blue.png" width="1360" height="833" loading="lazy" alt="A blue-hour street canyon: lit facades on both sides of the avenue, with the orange horizon at the end of the street.">
         </div>
       </article>
     </div>

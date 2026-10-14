@@ -244,6 +244,45 @@ If a shot kind does not come up in the take (crane and follow need active edits,
 
 ---
 
+## Epic City v3 launch angle
+
+The v3 city is a New York: procedural facades, a river with a suspension bridge, live billboards that show each agent's cost, and a sky that changes with the time of day. Lead with the line "Your repo is New York and your AI agents are the traffic." Use it for the hook, and attach the 20-second clip below. Attach `nyc-blue-overview.png` for a still, or `nyc-street-night.png` for the night version.
+
+### Tweet draft V3-1: the hook
+
+Your repo is New York. Your AI agents are the traffic.
+
+Every file is a building. Every agent is a drone flying to the file it edits. Live cost runs on the billboards above the avenues.
+
+Free, open source, 100% local. [LINK]
+
+### Tweet draft V3-2: the time of day
+
+Press T and your repo goes from blue hour to night.
+
+Wet avenues, taxis at the signals, a river with a bridge, helicopters on searchlight patrol. The city builds itself while the agents work.
+
+Free, open source, 100% local. [LINK]
+
+### 20-second shot list: blue hour to night
+
+**Setup:** open a repo where an agent is editing a file that is under construction (the crane and sparks show). Keep the time of day on the default, blue hour. Turn the Director camera off so the moves are yours. Reduced motion must be off. Record at 1920 × 1080, 60 fps, with captions in the lower third. Do a dry run first. The construction site and the billboard's activity only show while the agent is editing, so the take has to start during an edit.
+
+| Time | Scene | Camera and input | On-screen caption |
+|---|---|---|---|
+| 0:00–0:05 | Blue-hour reveal | Start high and wide on the framed city at blue hour. Descend slowly over the island toward the bridge. No input. | "Your repo is New York." |
+| 0:05–0:10 | Drone dive | Click the drone over the active edit. The camera follows it down to the construction site, the tower crane and the welding sparks. | "Your agents are the traffic." |
+| 0:10–0:15 | Billboard | Pull back to the nearest LED billboard and hold until its agent name, action, running cost and tokens are readable. The cost ticks up while you watch. | "Live cost, on the billboard." |
+| 0:15–0:20 | Time of day | Press `T` once. The sky blends from blue hour to night over about 2 seconds. Hold on the lit towers and the bridge, then end on the logo. | "Skyline. Free. Open source. 100% local." |
+
+**Notes for the editor:**
+
+- `T` cycles blue hour, night and dawn, so one press from the default gives night. The blend takes about 2 seconds, so the night is fully in place by 0:17.
+- Keep the camera moves slow and damped. Do not cut during the reveal or the dive.
+- If the billboard is off screen during the dive, pull back to it in the billboard shot. Do not cut to a different repo.
+
+---
+
 ## 5. Press kit
 
 ### 50 words

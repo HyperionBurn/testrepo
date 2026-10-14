@@ -286,6 +286,25 @@ under 3M (`modelPicker.ts`). The module map is in [docs/ARCHITECTURE.md](docs/AR
   textures), `__skylineFxStep(seconds)`, `__skylineTrafficStep(seconds)`, `__skylineDirectorStep(dt)`. They let the
   e2e harness fast-forward animation, since software GL runs at about 1 fps.
 
+## City v3 (`src/renderer/src/city/`)
+v3 makes the city a New York. The repo's city keeps its layout, and a generated metropolis runs out beyond its square.
+The module map is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#renderer-v3).
+- **Look:** the default `real` style gives each file a procedural facade (`facade/`): dark brick or glass, irregular lit
+  windows, setback towers, and rooftop tanks, antennas and beacons (`roofs.ts`). The `stylized` style keeps the Kenney models.
+- **Live signage:** LED billboards (`Signage.tsx`, placed by `signs.ts`) show each agent's name, action, cost, tokens and a
+  sparkline, redrawn at 2 Hz.
+- **Streets:** wet avenues with traffic (`Vehicles.tsx`), signals that match the cars' cycle (`Signals.tsx`), pedestrians
+  (`Pedestrians.tsx`) and steam from vents and manholes (`Steam.tsx`).
+- **Metropolis:** an endless grid (`metro.ts`, `Metropolis.tsx`) with two rivers and boats (`Water.tsx`, `Boats.tsx`), two
+  suspension bridges (`Bridges.tsx`), helicopters with searchlights (`Helicopters.tsx`) and airliners far above (`Aircraft.tsx`).
+- **Sky and grade:** blue hour, night and dawn (`skyPresets.ts`, `Sky.tsx`), haze and clouds (`Atmosphere.tsx`) and a
+  cinematic grade with bloom and tone mapping (`Grade.tsx`, `Effects.tsx`).
+- **Keys:** `T` cycles the time of day (blue hour, night, dawn) and is remembered. `B` switches between the `real` and
+  `stylized` styles and is remembered. `C` tints the natural look by area, language, churn or age. `V` is the Director
+  camera, as before.
+- **Budget:** the target is at most 150 draw calls and 4.5 M triangles on screen. The enforced limits are `TRI_BUDGET`
+  (3 M, repo buildings) and 1.2 M for the metropolis plan. The draw-call and total figures are checked by hand with `__skylineStats()`.
+
 ## Design — "Liquid Glass"
 - The 3D city fills the window edge-to-edge; all UI floats above it as glass.
 - Night-time city: deep navy→black gradient sky, faint fog, ground with subtle grid,
