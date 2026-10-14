@@ -137,10 +137,12 @@ void main() {
   // Far away the lit panes average out to one warm tone, so no per-window colour can alias into speckle.
   vec3 avgCol = vec3(0.95, 0.72, 0.44) * 0.13;
   vec3 col = wall + winCol * (lit * inten * pane * aa * uWinGain) + avgCol * (1.0 - aa) * uWinGain;
-  // Tall towers: a lit crown band near the top, and a faint warm rim where the face turns away.
-  float tall = smoothstep(60.0, 180.0, vHgt);
-  float crown = smoothstep(0.93, 0.995, vUnitY) * tall * (1.0 - 0.5 * abs(n.y));
-  col += vec3(1.0, 0.7, 0.4) * crown * 0.6;
+  // Roofs are dark tar. Crowns are lit only on about 15 % of the tallest lots, as a thin warm band on the faces.
+  if (n.y > 0.5) col = vec3(0.018, 0.018, 0.022);
+  float crownGate = step(0.85, h21(vec2(vSeed * 71.0, 9.0)));
+  float tallC = smoothstep(80.0, 160.0, vHgt);
+  float crown = smoothstep(0.93, 0.995, vUnitY) * tallC * crownGate * (1.0 - abs(n.y)) * 0.35;
+  col += vec3(1.0, 0.7, 0.4) * crown;
   vec3 V = normalize(cameraPosition - vW);
   float rim = pow(1.0 - abs(dot(normalize(vWN), V)), 3.0);
   col += vec3(0.5, 0.28, 0.12) * rim * 0.1;
