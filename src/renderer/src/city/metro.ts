@@ -21,15 +21,15 @@ export const V_Z = CA
 
 export const METRO_RADIUS = 1800
 export const AVENUE_PITCH = 72
-export const AVENUE_WIDTH = 9
+export const AVENUE_WIDTH = 5
 export const STREET_PITCH = 22
-export const STREET_WIDTH = 5
-export const LOT_DEPTH = 8
+export const STREET_WIDTH = 3
+export const LOT_DEPTH = 9.5
 export const EXCLUSION_MARGIN = 25
 export const RIVER_INNER = 250
 export const RIVER_OUTER = 700
 /** Upper bound for the instanced boxes of one metropolis. */
-export const MAX_LOTS = 60000
+export const MAX_LOTS = 80000
 /** Length of one light-line segment along an avenue or street. */
 export const LIGHT_SEG = 36
 /** Radial LOD bands (centre distance from the origin). The near band gets the stepped-tier geometry. */
