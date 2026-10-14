@@ -10,6 +10,7 @@ import { Sky, FOG_HEX, FOG_DENSITY } from './Sky'
 import { Atmosphere } from './Atmosphere'
 import { Backdrop } from './Backdrop'
 import { Ground, Districts } from './Ground'
+import { GroundGlow } from './Glow'
 import { Buildings } from './Buildings'
 import { Roads } from './Roads'
 import { Scaffolding, Spotlight, ImportArcs } from './Overlays'
@@ -99,6 +100,7 @@ export default function CityCanvas() {
         <Backdrop />
         <Atmosphere />
         <Ground />
+        <GroundGlow />
         <CityDistricts />
         <Roads />
         <Buildings />

@@ -44,6 +44,9 @@ void main() {
   vec3 col = uBase;
   col += uGrid * (fine * 0.10 + major * 0.26) * (0.12 + 0.88 * glow);
   col += vec3(0.02, 0.05, 0.13) * glow;
+  // Beyond the city the plate is faintly mottled, so the ground reads as terrain, not a black void.
+  float mott = sin(p.x * 0.013 + sin(p.y * 0.021)) * sin(p.y * 0.011 + 1.3) * 0.5 + 0.5;
+  col *= 0.8 + 0.4 * mott;
   float dist = length(vW - cameraPosition);
   float fog = 1.0 - exp(-pow(dist * uDensity, 2.0));
   gl_FragColor = vec4(mix(col, uFog, fog), 1.0);
@@ -72,7 +75,7 @@ export function Ground() {
       }}
       onPointerOut={() => useSky.getState().hover(null)}
     >
-      <planeGeometry args={[900, 900]} />
+      <planeGeometry args={[3200, 3200]} />
     </mesh>
   )
 }

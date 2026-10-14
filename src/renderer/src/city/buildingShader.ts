@@ -249,3 +249,32 @@ export function prepareModelMaterial(material: MeshStandardMaterial, map: Textur
   material.map = map
   material.needsUpdate = true
 }
+
+/**
+ * A dimmed copy of the model material for the distant skyline ring: the same walls and per-pane windows, with the
+ * emission scaled down (`uDim`) so hundreds of far towers read as a faint lit mass, not a field of bright windows.
+ * Takes the caller's clock (`time`, the same one the sky uses) so the windows flicker in step with the scene.
+ */
+export function createFarSkylineMaterial(time: { value: number }, dim = 0.3): MeshStandardMaterial {
+  const mat = new MeshStandardMaterial({
+    color: '#8a94a8',
+    emissive: '#000000',
+    roughness: 0.7,
+    metalness: 0.05,
+    envMapIntensity: 0.05
+  })
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = time
+    shader.uniforms.uDim = { value: dim }
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${MODEL_VERT_DECL}`)
+      .replace('#include <begin_vertex>', MODEL_VERT_BODY)
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\nuniform float uDim;\n${MODEL_FRAG_DECL}`)
+      .replace('#include <color_fragment>', MODEL_FRAG_COLOR)
+      .replace('#include <emissivemap_fragment>', MODEL_FRAG_EMIT.replace('totalEmissiveRadiance = emit;', 'totalEmissiveRadiance = emit * uDim;'))
+      .replace('#include <fog_fragment>', FOG_BUILDINGS)
+  }
+  mat.customProgramCacheKey = () => 'skyline-far-models-v1'
+  return mat
+}

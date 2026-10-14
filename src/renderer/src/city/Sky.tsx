@@ -97,7 +97,7 @@ void main() {
   float az = atan(d.z, d.x);
   float drift = vnoise(vec3(cos(az), sin(az), h * 0.7) * 1.6 + vec3(3.1, 0.0, 0.0));
   vec3 glow = mix(uGlowA, uGlowB, smoothstep(0.6, 0.9, drift));
-  float band = exp(-max(h, 0.0) * 9.0) * 0.3 + exp(-abs(h) * 60.0) * 0.2;
+  float band = exp(-max(h, 0.0) * 6.5) * 0.42 + exp(-abs(h) * 40.0) * 0.26;
   col += glow * band;
 
   if (uDetail > 0.5) {
@@ -145,7 +145,7 @@ export function makeSkyMaterial(detail = true): ShaderMaterial {
     uniforms: {
       uTop: { value: new Color('#02040b') },
       uHorizon: { value: new Color('#1a2a52') },
-      uBottom: { value: new Color('#04050a') },
+      uBottom: { value: new Color('#0b1430') },
       uGlowA: { value: new Color('#19c6d9') },
       uGlowB: { value: new Color('#c64fae') },
       uMoonDir: { value: MOON_DIR.clone() },

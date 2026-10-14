@@ -40,8 +40,11 @@ const MID = 380
 const LIGHT_Y = 0.38
 const SUB_STEP = 1 / 20
 /** Streak width in world units, and the minimum on screen (about 1.7 px), so distant cars still catch the bloom. */
-const WIDTH = 0.26
-const MIN_PX = 1.7
+const WIDTH = 0.12
+const MIN_PX = 1.1
+/** Streaks fade out inside FADE_NEAR of the camera (so close-ups stay clean) and are full beyond FADE_FAR. */
+const FADE_NEAR = 15
+const FADE_FAR = 60
 
 const VERT = `
 attribute vec2 aCorner;
@@ -57,12 +60,13 @@ void main() {
   vec3 tail = head - vec3(aTrail.x, 0.0, aTrail.y) * aTrail.z;
   vec3 along = mix(tail, head, aCorner.x);
   float dist = length(cameraPosition - head);
-  float w = max(uWidth, dist * uPxWorld * ${MIN_PX.toFixed(1)});
+  float fade = smoothstep(${FADE_NEAR.toFixed(1)}, ${FADE_FAR.toFixed(1)}, dist);
+  float w = max(uWidth, dist * uPxWorld * ${MIN_PX.toFixed(1)}) * (0.35 + 0.65 * fade);
   vec3 side = vec3(-aTrail.y, 0.0, aTrail.x);
   vec3 p = along + side * (aCorner.y * w);
   vUv = vec2(aCorner.x, aCorner.y + 0.5);
   vColor = aColor.rgb;
-  vAlpha = aColor.a;
+  vAlpha = aColor.a * fade;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`
 
@@ -194,8 +198,8 @@ function buildWorld(layout: CityLayout): World {
     vertexShader: VERT,
     fragmentShader: FRAG,
     transparent: true,
-    // Light trails read as an overlay, as in a long exposure: the streets sit in narrow gaps between towers.
-    depthTest: false,
+    // Depth-tested against the towers so buildings occlude the trails; the trails do not write depth.
+    depthTest: true,
     depthWrite: false,
     // Every quad has the same winding, so FrontSide would cull them all from one side of the city.
     side: DoubleSide,

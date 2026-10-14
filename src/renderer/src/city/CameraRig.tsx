@@ -27,6 +27,21 @@ import { clearFlyoverCancel, flyoverCancelled, setCameraSettled, takeFlyoverRequ
 import { director } from './Director'
 import type { View } from './shots'
 
+declare global {
+  interface Window {
+    /** Test hook: pin the camera at a pose (world units), or pass nothing to hand it back. Used for review shots. */
+    __skylineCamera?: (pos?: { x: number; y: number; z: number }, look?: { x: number; y: number; z: number }) => void;
+  }
+}
+
+/** A pinned pose from window.__skylineCamera; null when the rig runs normally. */
+let pinnedPose: { pos: { x: number; y: number; z: number }; look: { x: number; y: number; z: number } } | null = null
+if (typeof window !== 'undefined') {
+  window.__skylineCamera = (pos, look) => {
+    pinnedPose = pos && look ? { pos, look } : null
+  }
+}
+
 const INTRO_S = 2.5
 const FLY_S = 0.9
 const FRAME_S = 1.1
@@ -267,6 +282,10 @@ export function CameraRig() {
     const t = clock.elapsedTime
     const frame = frameFor(size)
     applyView(camera, size, frame.offset)
+    if (pinnedPose) {
+      applyDirected(camera, controls, { pos: pinnedPose.pos, look: pinnedPose.look, fovBump: 0 })
+      return
+    }
 
     const finishFlight = (outcome: 'done' | 'cancelled') => {
       const f = flight.current

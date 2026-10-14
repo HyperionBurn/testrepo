@@ -2,14 +2,16 @@
 // distant skyline towers with sparse lit windows (instanced, shader-lit, no per-frame JS), and red aviation beacons
 // blinking on the tallest towers of the current layout. Three draw calls. Fog here uses its own, lighter density than
 // the city fog (a fraction of FOG_DENSITY) so the far rings stay readable instead of dissolving at 400 units.
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import {
-  BoxGeometry, BufferAttribute, BufferGeometry, Color, DoubleSide, InstancedMesh, Matrix4, Quaternion,
-  ShaderMaterial, Vector3
+  BoxGeometry, BufferAttribute, BufferGeometry, Color, DoubleSide, InstancedBufferAttribute, InstancedMesh, Matrix4,
+  MeshStandardMaterial, Quaternion, ShaderMaterial, Vector3
 } from 'three'
 import { useSky } from '../state/store'
 import { FOG_DENSITY, mulberry32, skyTime } from './Sky'
+import { loadModels, type LoadedModel } from './assets'
+import { createFarSkylineMaterial, prepareModelMaterial } from './buildingShader'
 
 /** Lighter than the city fog: the far rings sit 300 to 650 units out. */
 const BACKDROP_FOG = FOG_DENSITY * 0.3
@@ -57,9 +59,11 @@ function makeRidges(): BufferGeometry {
   const hgt: number[] = []
   const idx: number[] = []
   const SEG = 180
+  // Near range and far range, seen from the low wide and reveal poses. The framed view looks 35 degrees down, so its
+  // top edge sits below the horizon and these ridges are never in that frame.
   const layers = [
-    { r: 470, base: 4, amp: 52, layer: 0 },
-    { r: 700, base: 10, amp: 120, layer: 1 }
+    { r: 600, base: 26, amp: 150, layer: 0 },
+    { r: 930, base: 40, amp: 260, layer: 1 }
   ]
   for (const L of layers) {
     // Ridged harmonics: sharp crests from 1 - |sin|, with a seeded fractal jitter per vertex.
@@ -191,6 +195,98 @@ function makeSkyline(): InstancedMesh {
   return mesh
 }
 
+// The far ring with real models: each class is one InstancedMesh (3 low-detail towers, 2 skyscrapers). About 780 towers
+// on a seeded ring 300 to 480 units out. Triangles: ~316k. The box ring stays up until these are loaded.
+const FAR_LOW = ['low-detail-building-a', 'low-detail-building-c', 'low-detail-building-f']
+const FAR_TALL = ['building-skyscraper-b', 'building-skyscraper-d']
+const FAR_PALETTE = ['#2a6cff', '#19c6d9', '#c64fae', '#ffb36b', '#7fe7ff', '#6a5cff']
+
+function makeFarRing(models: LoadedModel[], mat: MeshStandardMaterial): InstancedMesh[] {
+  const rnd = mulberry32(91)
+  const groups = models.map((m) => ({ m, count: m.def.cls === 'skyscraper' ? 60 : 240 }))
+  const out: InstancedMesh[] = []
+  const m4 = new Matrix4()
+  const p = new Vector3()
+  const s = new Vector3()
+  const q = new Quaternion()
+  const up = new Vector3(0, 1, 0)
+  const col = new Color()
+  for (const { m, count } of groups) {
+    const geo = m.geometry.clone()
+    const size = new Float32Array(count * 3)
+    const lang = new Float32Array(count * 3)
+    const seed = new Float32Array(count)
+    const zero = new Float32Array(count)
+    const mesh0 = new InstancedMesh(geo, mat, count)
+    const tall = m.def.cls === 'skyscraper'
+    for (let i = 0; i < count; i++) {
+      const a = rnd() * Math.PI * 2
+      const R = 300 + Math.pow(rnd(), 0.8) * 180
+      p.set(Math.cos(a) * R, 0, Math.sin(a) * R)
+      // Footprint in world units, height from a skewed distribution: most low, a few towers.
+      const w = tall ? 4 + rnd() * 3 : 5 + rnd() * 5
+      const k = rnd()
+      const h = tall ? 9 + rnd() * 8 : k < 0.75 ? 4 + rnd() * 7 : k < 0.95 ? 12 + rnd() * 8 : 22 + rnd() * 16
+      s.set(w, h, w * (0.8 + rnd() * 0.4))
+      q.setFromAxisAngle(up, Math.floor(rnd() * 4) * (Math.PI / 2) + (rnd() - 0.5) * 0.2)
+      m4.compose(p, q, s)
+      mesh0.setMatrixAt(i, m4)
+      size[i * 3] = s.x
+      size[i * 3 + 1] = s.y
+      size[i * 3 + 2] = s.z
+      col.set(FAR_PALETTE[Math.floor(rnd() * FAR_PALETTE.length)]!).multiplyScalar(0.7)
+      lang[i * 3] = col.r
+      lang[i * 3 + 1] = col.g
+      lang[i * 3 + 2] = col.b
+      seed[i] = rnd()
+    }
+    geo.setAttribute('aSize', new InstancedBufferAttribute(size, 3))
+    geo.setAttribute('aLang', new InstancedBufferAttribute(lang, 3))
+    geo.setAttribute('aSeed', new InstancedBufferAttribute(seed, 1))
+    geo.setAttribute('aGlow', new InstancedBufferAttribute(zero, 1))
+    geo.setAttribute('aGlowColor', new InstancedBufferAttribute(new Float32Array(count * 3), 3))
+    geo.setAttribute('aSel', new InstancedBufferAttribute(new Float32Array(count), 1))
+    geo.setAttribute('aShim', new InstancedBufferAttribute(new Float32Array(count), 1))
+    mesh0.instanceMatrix.needsUpdate = true
+    mesh0.frustumCulled = false
+    out.push(mesh0)
+  }
+  return out
+}
+
+function FarModels({ onReady }: { onReady: (ok: boolean) => void }) {
+  const [meshes, setMeshes] = useState<InstancedMesh[] | null>(null)
+  const mat = useMemo(() => {
+    return createFarSkylineMaterial(skyTime, 0.3)
+  }, [])
+  useEffect(() => {
+    let live = true
+    const ids = [...FAR_LOW, ...FAR_TALL]
+    loadModels(ids)
+      .then((models) => {
+        if (!live) return
+        prepareModelMaterial(mat, models[0]!.map)
+        setMeshes(makeFarRing(models, mat))
+        onReady(true)
+      })
+      .catch((err: unknown) => {
+        console.warn('far skyline models unavailable, keeping the boxes', err)
+        onReady(false)
+      })
+    return () => {
+      live = false
+    }
+  }, [mat, onReady])
+  useEffect(() => () => {
+    mat.dispose()
+  }, [mat])
+  useEffect(() => () => {
+    meshes?.forEach((m) => m.geometry.dispose())
+  }, [meshes])
+  if (!meshes) return null
+  return <>{meshes.map((m, i) => <primitive key={i} object={m} />)}</>
+}
+
 // ---- Aviation beacons ------------------------------------------------------------------------------------
 
 const BEACON_VERT = `
@@ -240,16 +336,19 @@ export function Backdrop() {
   const ridgeGeo = useMemo(() => makeRidges(), [])
   const ridgeMat = useMemo(() => new ShaderMaterial({
     uniforms: {
-      uNear: { value: new Color('#070b1c') },
-      uFar: { value: new Color('#0f1b3d') },
+      uNear: { value: new Color('#0a1130') },
+      uFar: { value: new Color('#16295a') },
       uHorizon: { value: new Color(HORIZON) },
-      uFogDensity: { value: BACKDROP_FOG }
+      // Ridges fade less than the far towers: the framed view looks down at the horizon, so they must read against it.
+      uFogDensity: { value: BACKDROP_FOG * 0.4 }
     },
     vertexShader: RIDGE_VERT,
     fragmentShader: RIDGE_FRAG,
     side: DoubleSide
   }), [])
   const skyline = useMemo(() => makeSkyline(), [])
+  // The box ring shows until the far models are in; then it is dropped.
+  const [modelsUp, setModelsUp] = useState(false)
   const beaconGeo = useMemo(() => makeBeacons(layout?.buildings ?? []), [layout])
   const beaconMat = useMemo(() => new ShaderMaterial({
     uniforms: { uTime: skyTime, uPixelRatio: { value: 1 } },
@@ -276,7 +375,8 @@ export function Backdrop() {
   return (
     <>
       <mesh geometry={ridgeGeo} material={ridgeMat} frustumCulled={false} renderOrder={-6} />
-      <primitive object={skyline} frustumCulled={false} />
+      {!modelsUp && <primitive object={skyline} frustumCulled={false} />}
+      <FarModels onReady={setModelsUp} />
       <points geometry={beaconGeo} material={beaconMat} frustumCulled={false} renderOrder={4} />
     </>
   )
