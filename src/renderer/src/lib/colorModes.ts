@@ -8,7 +8,6 @@ import type { CityBuilding, FileNode, Lang } from '../../../shared/types'
 import { LANG_COLORS, LANG_LABEL } from '../../../shared/lang'
 import { hexToRgb } from '../../../shared/color'
 import type { NeighborhoodIndex } from '../../../shared/layout'
-import { middleEllipsis } from './format'
 
 export const COLOR_MODES = ['area', 'language', 'churn', 'age'] as const
 export type ColorMode = (typeof COLOR_MODES)[number]
@@ -225,7 +224,7 @@ export function buildColorPlan(
       const commits = values[i] ?? 0
       return {
         key: b?.path ?? '',
-        label: middleEllipsis(b?.path ?? '', 34),
+        label: b?.path ?? '',
         color: rampAt(CHURN_RAMP, ranks[i] ?? 0),
         count: commits
       }
@@ -238,7 +237,7 @@ export function buildColorPlan(
     const b = buildings[i]
     return {
       key: b?.path ?? '',
-      label: middleEllipsis(b?.path ?? '', 34),
+      label: b?.path ?? '',
       color: rampAt(AGE_RAMP, ranks[i] ?? 0),
       ts: values[i] ?? 0
     }

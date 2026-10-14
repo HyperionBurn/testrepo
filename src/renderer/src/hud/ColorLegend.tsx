@@ -2,7 +2,7 @@
 // Click (or C) cycles the mode. Sits above the timeline band, and clears the inspector when one is open.
 import { useSky } from '../state/store'
 import { useNow } from '../lib/hooks'
-import { middleEllipsis, relativeTime } from '../lib/format'
+import { relativeTime, tailEllipsis } from '../lib/format'
 import { COLOR_MODE_LABEL, LEGEND_LIMIT, type ColorMode, type LegendEntry } from '../lib/colorModes'
 
 function countText(mode: ColorMode, e: LegendEntry, now: number): string | null {
@@ -10,6 +10,12 @@ function countText(mode: ColorMode, e: LegendEntry, now: number): string | null 
   if (mode === 'age' && e.ts !== undefined && e.ts > 0) return relativeTime(e.ts, now)
   if (e.count !== undefined) return e.count.toLocaleString('en-US')
   return null
+}
+
+/** What the two ends of a churn or age ramp mean. */
+const RAMP_ENDS: Partial<Record<ColorMode, [string, string]>> = {
+  churn: ['Rarely changed', 'Most changed'],
+  age: ['Older', 'Recent']
 }
 
 export function ColorLegend() {
@@ -24,6 +30,7 @@ export function ColorLegend() {
   const entries = plan.legend.slice(0, LEGEND_LIMIT)
   const label = COLOR_MODE_LABEL[mode]
   const ramp = plan.ramp
+  const ends = RAMP_ENDS[mode]
   const gradient = ramp
     ? `linear-gradient(90deg, ${ramp.map((c, i) => `${c} ${Math.round((i / Math.max(1, ramp.length - 1)) * 100)}%`).join(', ')})`
     : null
@@ -49,6 +56,12 @@ export function ColorLegend() {
         <span className="legend__hint kbd">C</span>
       </div>
       {gradient && <div className="legend__ramp" style={{ background: gradient }} aria-hidden="true" />}
+      {gradient && ends && (
+        <div className="legend__scale" aria-hidden="true">
+          <span>{ends[0]}</span>
+          <span>{ends[1]}</span>
+        </div>
+      )}
       {plan.note && <div className="legend__note">{plan.note}</div>}
       {entries.length > 0 && (
         <ul className="legend__list">
@@ -57,7 +70,7 @@ export function ColorLegend() {
             return (
               <li key={e.key} className="legend__row" title={e.label}>
                 <span className="legend__dot" style={{ background: e.color, boxShadow: `0 0 8px ${e.color}` }} aria-hidden="true" />
-                <span className="legend__label">{mode === 'churn' || mode === 'age' ? middleEllipsis(e.label, 26) : e.label}</span>
+                <span className="legend__label">{mode === 'churn' || mode === 'age' ? tailEllipsis(e.label, 18) : e.label}</span>
                 {extra && <span className="legend__count">{extra}</span>}
               </li>
             )

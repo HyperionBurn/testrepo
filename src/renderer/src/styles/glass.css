@@ -19,8 +19,9 @@
 
   /* Text */
   --text-1: rgba(255, 255, 255, 0.92);
-  --text-2: rgba(255, 255, 255, 0.64);
-  --text-3: rgba(255, 255, 255, 0.42);
+  /* Body and caption text on glass. text-3 is the faintest tone that still meets WCAG AA (4.5:1) on the dark fill. */
+  --text-2: rgba(255, 255, 255, 0.72);
+  --text-3: rgba(255, 255, 255, 0.56);
 
   /* Glass */
   --glass-fill: rgba(22, 26, 40, 0.42);

@@ -38,7 +38,7 @@
   align-items: center;
   gap: 12px;
   padding: 0 12px 0 14px;
-  background: linear-gradient(180deg, rgba(5, 7, 13, 0.92) 0%, rgba(5, 7, 13, 0.64) 68%, rgba(5, 7, 13, 0) 100%);
+  background: linear-gradient(180deg, rgba(5, 7, 13, 0.94) 0%, rgba(5, 7, 13, 0.82) 60%, rgba(5, 7, 13, 0) 100%);
   -webkit-app-region: drag;
 }
 
@@ -70,6 +70,8 @@
   letter-spacing: -0.01em;
   color: var(--text-1);
   max-width: 240px;
+  /* The repo name is the title of the view. Shrink the branch pill first, never this. */
+  flex: none;
 }
 
 .branch-pill {
@@ -532,7 +534,8 @@
 /* ---------- timeline ---------- */
 
 .hud {
-  --band: 132px;
+  /* Height reserved at the bottom for the timeline. The tall replay bar needs about 140px plus its gap. */
+  --band: 150px;
 }
 
 .timeline-wrap {
@@ -1581,6 +1584,12 @@
   }
 }
 
+@media (max-width: 1100px) {
+  .branch-pill {
+    max-width: 112px;
+  }
+}
+
 /* ---------- capture: title-bar menu, flyover HUD hide, progress pill ---------- */
 .hud--flying > :not(.capture-pill) {
   display: none !important;
@@ -1657,7 +1666,8 @@
 .capture-pill {
   position: absolute;
   left: 50%;
-  bottom: 24px;
+  /* Floats above the timeline band, so it never covers the scrubber's status line. */
+  bottom: calc(var(--band, 132px) + 12px);
   z-index: 70;
   display: flex;
   align-items: center;
@@ -1733,7 +1743,7 @@
   position: absolute;
   right: 12px;
   bottom: calc(var(--band, 132px) + 12px);
-  width: 216px;
+  width: 248px;
   box-sizing: border-box;
   padding: 10px 12px 10px 14px;
   border-radius: var(--r-s);
@@ -1786,6 +1796,16 @@
   margin: 9px 0 2px;
   border-radius: 999px;
   box-shadow: 0 0 12px rgba(255, 255, 255, 0.06);
+}
+
+.legend__scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 10.5px;
+  line-height: 1.2;
 }
 
 .legend__note {

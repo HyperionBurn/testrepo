@@ -49,6 +49,12 @@ export function middleEllipsis(s: string, max = 40): string {
   return `${s.slice(0, head)}…${tail > 0 ? s.slice(-tail) : ''}`
 }
 
+/** Keeps the end of a string, which holds the file name: "…renderer/src/hud/Inspector.tsx". */
+export function tailEllipsis(s: string, max = 24): string {
+  if (s.length <= max) return s
+  return `…${s.slice(-(max - 1))}`
+}
+
 /** 45s, 3m 12s, 1h 04m. */
 export function duration(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))
