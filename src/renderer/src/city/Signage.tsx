@@ -19,6 +19,8 @@ declare global {
   interface Window {
     /** Re-draws the billboard atlases now, from the current store (tests). */
     __skylineSignsRedraw?: () => void;
+    /** The planned signs of the current city (tests and debugging). */
+    __skylineSignList?: () => SignSpec[];
   }
 }
 
@@ -422,6 +424,11 @@ export function Signage() {
 
   useEffect(() => {
     skylineCounts.signs = plan?.signs.length ?? 0
+    if (!plan) return
+    window.__skylineSignList = () => plan.signs
+    return () => {
+      if (window.__skylineSignList) delete window.__skylineSignList
+    }
   }, [plan])
 
   if (!built) return null

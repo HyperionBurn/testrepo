@@ -11,6 +11,13 @@ import { hash01 } from './signs'
 import { skylineCounts, steamFor, type SteamEmitter } from './roofs'
 
 /** Puffs per emitter. Each emitter cycles through its puffs at staggered phases. */
+declare global {
+  interface Window {
+    /** Steam emitters of the current city (tests and debugging). */
+    __skylineSteamEmitters?: () => SteamEmitter[];
+  }
+}
+
 export const PUFFS_PER_EMITTER = 6
 /** Global wind, world units per unit of rise: steam leans east and a little south. */
 export const WIND: readonly [number, number] = [0.55, 0.22]
@@ -139,6 +146,11 @@ export function Steam() {
 
   useEffect(() => {
     skylineCounts.steamEmitters = emitters?.length ?? 0
+    if (!emitters) return
+    window.__skylineSteamEmitters = () => emitters
+    return () => {
+      if (window.__skylineSteamEmitters) delete window.__skylineSteamEmitters
+    }
   }, [emitters])
 
   if (!built) return null

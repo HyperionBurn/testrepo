@@ -147,8 +147,8 @@ function buildPlan(bd: Build): RooftopPlan {
     }
 
     // Water tank on stilts: the New York icon. Fills most of the mid-rise roofs and some tall ones.
-    if (minSide >= 1.2 && mid && kept('tank') && r('tank') < (tall ? 0.5 : 0.3)) {
-      const rad = clamp(minSide * 0.16, 0.22, 0.55)
+    if (minSide >= 0.9 && mid && kept('tank') && r('tank') < (tall ? 0.7 : 0.55)) {
+      const rad = clamp(minSide * 0.16, 0.16, 0.5)
       const count = tall && r('tank-2') < 0.2 ? 2 : 1
       for (let k = 0; k < count; k++) {
         const key = `tank-${k}`
@@ -159,7 +159,7 @@ function buildPlan(bd: Build): RooftopPlan {
     }
 
     // AC boxes: a few per roof, more on tall ones.
-    const acCount = tall ? 2 + Math.floor(r('ac-n') * 4) : mid ? Math.floor(r('ac-n') * 3) : 0
+    const acCount = tall ? 2 + Math.floor(r('ac-n') * 4) : mid ? Math.floor(r('ac-n') * 4) : 0
     for (let k = 0; k < acCount; k++) {
       if (!kept(`ac-${k}`)) continue
       const s = clamp(minSide * 0.14, 0.25, 0.5) * (0.8 + 0.4 * r(`ac-${k}-s`))
@@ -182,7 +182,7 @@ function buildPlan(bd: Build): RooftopPlan {
     }
 
     // Vent stacks; about half of them breathe steam.
-    if (mid && kept('vent') && r('vent') < 0.4) {
+    if (mid && kept('vent') && r('vent') < 0.5) {
       const n = 1 + (r('vent-2') < 0.4 ? 1 : 0)
       for (let k = 0; k < n; k++) {
         const rad = 0.05 + 0.05 * r(`vent-${k}-r`)
