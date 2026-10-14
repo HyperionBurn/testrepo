@@ -1,6 +1,7 @@
 // Chooses which Kenney model stands for each file, and how it is scaled to its footprint and height.
 // Pure (no three.js): BuildingField turns the placements into instance matrices.
 import { modelsByClass, type ModelClass, type ModelDef } from './assets/manifest'
+import { TEMPLATES, templatesWith, templateTris, type Template } from './facade/templates'
 
 /** Share of the file's footprint the model fills; the rest stays street and plaza. */
 export const FILL = 0.9
@@ -242,6 +243,50 @@ function degradeSmallest(plan: Placement[], alts: Placement[], order: readonly n
     if (alts[i]!.tris < plan[i]!.tris) plan[i] = alts[i]!
   }
   return t
+}
+
+// ---------- 'real' style: facade templates ----------
+
+/** Share of the footprint a facade fills: the rest is the street gap the layout leaves between cells. */
+export const FACADE_FILL = 0.97
+/** Smallest footprint side a facade is drawn at, so a tiny file still reads as a small building. */
+export const FACADE_MIN_FOOT = 0.22
+/** Rendered height below which a file is a squat plate. */
+export const PLATE_MAX_H = 1.6
+/** LOC percentile where spires start: the top 1.5 % (the same cut as the height model). */
+const FACADE_SUPER_PCT = 0.985
+
+/** The facade template for one file. Pure: the path hash picks among the templates of the right kind. */
+export function facadePlacement(input: PickInput, pct: number): Placement {
+  const spire = pct >= FACADE_SUPER_PCT
+  const tower = pct >= TOWER_PCT
+  const squat = input.h < PLATE_MAX_H
+  const wide = Math.max(input.w, input.d) / Math.max(Math.min(input.w, input.d), 1e-6) > 1.6
+  let pool: readonly Template[]
+  if (spire) pool = templatesWith('spire')
+  else if (tower) pool = templatesWith('tower')
+  else if (squat) pool = templatesWith('plate')
+  else if (wide) pool = templatesWith('complex')
+  else pool = templatesWith('mid')
+  const t = pool[Math.min(pool.length - 1, Math.floor(hashPath(input.path) * pool.length))] ?? TEMPLATES[0]!
+  const sx = Math.max(input.w * FACADE_FILL, FACADE_MIN_FOOT)
+  const sz = Math.max(input.d * FACADE_FILL, FACADE_MIN_FOOT)
+  const cls: ModelClass = spire ? 'skyscraper' : tower ? 'tower' : squat ? 'lowrise' : 'midrise'
+  return {
+    modelId: t.id,
+    cls,
+    tris: templateTris(t),
+    sx,
+    sz,
+    invY: 1,
+    stretch: input.h / Math.max(sx, sz)
+  }
+}
+
+/** Facade placements for every building, in input order. No budget pass: a facade is a dozen quads. */
+export function planFacades(inputs: readonly PickInput[]): Placement[] {
+  const rank = new LocRank(inputs.map((i) => i.loc))
+  return inputs.map((i) => facadePlacement(i, rank.percentile(i.loc)))
 }
 
 /** Lines of code by path, from a scan's files. */

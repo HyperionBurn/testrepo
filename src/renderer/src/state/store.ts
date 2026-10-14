@@ -19,8 +19,11 @@ import {
   type ColorPlan
 } from '../lib/colorModes'
 import { firstSeenByPath } from '../lib/firstSeen'
+import { DEFAULT_TIME_OF_DAY, isTimeOfDay, nextTimeOfDay, type TimeOfDay } from '../city/skyPresets'
 
 export type Mode = 'live' | 'replay' | 'git';
+/** The building look: procedural New York facades (default) or the Kenney models. Toggled with B, saved per browser. */
+export type BuildingStyle = 'real' | 'stylized';
 /** A capture that stages the camera: the framed city for a snapshot, or the orbit for a flyover. */
 export type CaptureMode = 'snapshot' | 'flyover';
 export interface Heat { ts: number; agentId: string; kind: AgentEventType }
@@ -29,6 +32,25 @@ export interface Heat { ts: number; agentId: string; kind: AgentEventType }
 export const MAX_EVENTS = 5000
 
 const COLOR_MODE_KEY = 'skyline.colorMode'
+const BUILDING_STYLE_KEY = 'skyline.buildingStyle'
+
+/** The saved building style, or 'real'. Storage can be unavailable; the choice is only a convenience. */
+function readBuildingStyle(): BuildingStyle {
+  try {
+    const v = typeof window === 'undefined' ? null : window.localStorage.getItem(BUILDING_STYLE_KEY)
+    return v === 'stylized' ? 'stylized' : 'real'
+  } catch {
+    return 'real'
+  }
+}
+
+function writeBuildingStyle(s: BuildingStyle): void {
+  try {
+    if (typeof window !== 'undefined') window.localStorage.setItem(BUILDING_STYLE_KEY, s)
+  } catch {
+    // Not persisted; the style still applies for this session.
+  }
+}
 
 /** The saved color mode, or the default. Storage can be unavailable (private windows); the choice is only a convenience. */
 function readColorMode(): ColorMode {
@@ -48,6 +70,26 @@ function writeColorMode(m: ColorMode): void {
   }
 }
 
+const TIME_OF_DAY_KEY = 'skyline.timeOfDay'
+
+/** The saved time of day, or the default (blue hour). Storage can be unavailable; the choice is a convenience. */
+function readTimeOfDay(): TimeOfDay {
+  try {
+    const v = typeof window === 'undefined' ? null : window.localStorage.getItem(TIME_OF_DAY_KEY)
+    return isTimeOfDay(v) ? v : DEFAULT_TIME_OF_DAY
+  } catch {
+    return DEFAULT_TIME_OF_DAY
+  }
+}
+
+function writeTimeOfDay(t: TimeOfDay): void {
+  try {
+    if (typeof window !== 'undefined') window.localStorage.setItem(TIME_OF_DAY_KEY, t)
+  } catch {
+    // Not persisted; the sky still changes for this session.
+  }
+}
+
 interface SkyState {
   repo: RepoSnapshot | null; layout: CityLayout | null;
   agents: AgentInfo[]; events: AgentEvent[];            // events capped at 5000, ascending ts
@@ -60,6 +102,7 @@ interface SkyState {
   capture: CaptureMode | null;                           // set while the camera is staged for a capture (also hides the HUD for flyovers)
   captureDpr: number | null;                             // raised pixel ratio while a snapshot is rendered, so the image is large enough
   colorMode: ColorMode;                                  // what the buildings are colored by (persisted)
+  buildingStyle: BuildingStyle;                          // real facades or the Kenney models (persisted)
   hoods: NeighborhoodIndex | null;                       // neighborhoods of the current layout (derived in setRepo)
   colorPlan: ColorPlan | null;                           // building colors and legend for colorMode (derived in setRepo / setColorMode)
   director: boolean;                                     // director camera (V): cuts between shots while the user is hands-off; never on with reduced motion
@@ -72,6 +115,9 @@ interface SkyState {
   setGitTs(ts: number | null): void; toggleImports(): void;
   requestFrame(): void; setCapture(m: CaptureMode | null): void; setCaptureDpr(d: number | null): void;
   setColorMode(m: ColorMode): void; cycleColorMode(): void;
+  setBuildingStyle(s: BuildingStyle): void; toggleBuildingStyle(): void;
+  timeOfDay: TimeOfDay;                                  // sky preset: blue hour, night or dawn (persisted, key T)
+  setTimeOfDay(t: TimeOfDay): void; cycleTimeOfDay(): void;
 }
 
 /** Event types that count as touching a file for heat. */
@@ -154,6 +200,8 @@ export const useSky = create<SkyState>()((set, get) => ({
   capture: null,
   captureDpr: null,
   colorMode: readColorMode(),
+  buildingStyle: readBuildingStyle(),
+  timeOfDay: readTimeOfDay(),
   hoods: null,
   colorPlan: null,
   director: false,
@@ -258,6 +306,24 @@ export const useSky = create<SkyState>()((set, get) => ({
 
   cycleColorMode() {
     get().setColorMode(nextColorMode(get().colorMode))
+  },
+
+  setBuildingStyle(s) {
+    writeBuildingStyle(s)
+    set({ buildingStyle: s })
+  },
+
+  toggleBuildingStyle() {
+    get().setBuildingStyle(get().buildingStyle === 'real' ? 'stylized' : 'real')
+  },
+
+  setTimeOfDay(t) {
+    writeTimeOfDay(t)
+    set({ timeOfDay: t })
+  },
+
+  cycleTimeOfDay() {
+    get().setTimeOfDay(nextTimeOfDay(get().timeOfDay))
   }
 }))
 

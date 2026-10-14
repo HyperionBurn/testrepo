@@ -1,22 +1,21 @@
-// Atmosphere: three slow ground-fog banks lit by the city, a cloud shell high above it (lit from below, teal and
-// magenta), and a few hundred dust motes around the camera for depth. Five draw calls in total. All motion is in the
-// shaders on the shared clock skyTime, so reduced motion (which freezes that clock) makes it all static.
+// Atmosphere: warm city haze. Ground-level haze layers lit orange by the street lights (additive, drifting), a thin
+// mid-level haze that picks up the horizon colour, a stratified light-scatter dome around the city whose strength
+// follows the lit-window density, and high thin cloud sheets lit from below by the city. Colours and strengths come
+// from the shared time-of-day uniforms (Sky.tsx). Six draw calls. All motion is in the shaders on the shared clock
+// skyTime, so reduced motion (which freezes that clock) makes it all static.
 import { useEffect, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
-import {
-  AdditiveBlending, BackSide, BufferAttribute, BufferGeometry, Color, PlaneGeometry, ShaderMaterial, SphereGeometry, Vector3
-} from 'three'
-import { DOME_VERT, NOISE_GLSL, mulberry32, skyTime } from './Sky'
+import { AdditiveBlending, BackSide, PlaneGeometry, ShaderMaterial, SphereGeometry } from 'three'
+import { useSky } from '../state/store'
+import { DOME_VERT, NOISE_GLSL, colorU, levelU, skyTime } from './Sky'
 
-const FOG_BANK_FRAG = `
+const HAZE_GROUND_FRAG = `
 uniform float uTime;
 uniform float uScale;
 uniform float uSpeed;
 uniform float uAlpha;
 uniform float uSeed;
-uniform vec3 uBank;
-uniform vec3 uTeal;
-uniform vec3 uMag;
+uniform vec3 uHaze;
 varying vec3 vW;
 ${NOISE_GLSL}
 void main() {
@@ -24,72 +23,85 @@ void main() {
   float t = uTime * uSpeed;
   float n = fbm3(vec3(p * uScale + vec2(t, -0.6 * t), uSeed)) * 0.75
     + fbm3(vec3(p * uScale * 2.6 - vec2(1.7 * t, 0.0), uSeed + 5.0)) * 0.25;
-  float bank = smoothstep(0.4, 0.8, n);
+  float bank = smoothstep(0.42, 0.8, n);
+  // Street light pools: the haze is brightest over the core and thins out toward the far city.
+  float lit = exp(-length(p) * 0.008);
+  float edge = 1.0 - smoothstep(160.0, 520.0, length(p));
+  gl_FragColor = vec4(uHaze * (0.35 + 0.65 * lit), bank * uAlpha * lit * edge);
+}`
+
+const HAZE_MID_FRAG = `
+uniform float uTime;
+uniform float uScale;
+uniform float uSpeed;
+uniform float uAlpha;
+uniform float uSeed;
+uniform vec3 uHorizon;
+uniform vec3 uFog;
+varying vec3 vW;
+${NOISE_GLSL}
+void main() {
+  vec2 p = vW.xz;
+  float t = uTime * uSpeed;
+  float n = fbm3(vec3(p * uScale + vec2(-t, 0.4 * t), uSeed));
+  float bank = smoothstep(0.45, 0.8, n);
   float r = length(p);
-  // City light pools in the middle and tints the fog; the far fog stays cold.
-  float lit = exp(-r * 0.009);
-  float mag = smoothstep(0.45, 0.7, fbm3(vec3(p * 0.004, uSeed + 9.0)));
-  vec3 glow = mix(uTeal, uMag, mag * 0.6);
-  vec3 col = mix(uBank, glow, lit * 0.8);
-  float edge = 1.0 - smoothstep(160.0, 520.0, r);
+  // Picks up the horizon colour near the far city and the fog colour overhead.
+  vec3 col = mix(uFog, uHorizon, exp(-r * 0.004));
+  float edge = 1.0 - smoothstep(180.0, 620.0, r);
   gl_FragColor = vec4(col, bank * uAlpha * edge);
 }`
 
-const CLOUD_FRAG = `
+const SCATTER_FRAG = `
 uniform float uTime;
+uniform vec3 uHaze;
+uniform float uScatter;
+uniform float uDensity;
 varying vec3 vDir;
 ${NOISE_GLSL}
 void main() {
   vec3 d = normalize(vDir);
   float h = d.y;
-  float band = smoothstep(0.1, 0.3, h) * (1.0 - smoothstep(0.6, 0.9, h));
-  // Stretched horizontally so the cover reads as sheets, drifting very slowly.
+  float az = atan(d.z, d.x);
+  // Stratified: thin bright layers in the scattering, as in long-exposure city photos.
+  float strat = 0.55 + 0.45 * sin(h * 70.0 + fbm3(vec3(cos(az), sin(az), h * 3.0) * 1.4) * 5.0);
+  float glow = exp(-max(h, 0.0) * 4.5) * smoothstep(-0.04, 0.03, h);
+  float amt = glow * strat * uScatter * uDensity * 0.22;
+  gl_FragColor = vec4(uHaze * amt, 1.0);
+}`
+
+const CLOUD_FRAG = `
+uniform float uTime;
+uniform vec3 uCloudLow;
+uniform vec3 uCloudHigh;
+uniform float uSheets;
+varying vec3 vDir;
+${NOISE_GLSL}
+void main() {
+  vec3 d = normalize(vDir);
+  float h = d.y;
+  float band = smoothstep(0.12, 0.3, h) * (1.0 - smoothstep(0.55, 0.85, h));
+  // Stretched horizontally so the cover reads as thin sheets, drifting very slowly.
   vec3 p = vec3(d.x, d.y * 0.45, d.z) * 3.2 + vec3(uTime * 0.01, 0.0, uTime * 0.006);
   float cloud = smoothstep(0.5, 0.85, fbm3(p));
-  // Lit from below: the underside glows, cyan low and magenta high.
-  float under = 1.0 - smoothstep(0.15, 0.55, h);
-  vec3 tint = mix(vec3(0.2, 0.9, 1.0), vec3(1.0, 0.4, 0.85), smoothstep(0.25, 0.65, h));
-  gl_FragColor = vec4(tint * (0.35 + 0.65 * under), cloud * band * 0.22);
-}`
-
-const MOTE_VERT = `
-attribute vec3 aSeed;
-attribute float aSize;
-uniform vec3 uCam;
-uniform float uTime;
-uniform float uPixelRatio;
-varying float vA;
-const vec3 BOX = vec3(140.0, 70.0, 140.0);
-void main() {
-  // Each mote keeps a fixed spot in a box that wraps around the camera, so the field never empties.
-  vec3 base = (aSeed - 0.5) * BOX;
-  base += vec3(sin(uTime * 0.13 + aSeed.x * 40.0), sin(uTime * 0.09 + aSeed.y * 30.0) * 0.6, cos(uTime * 0.11 + aSeed.z * 50.0)) * 3.0;
-  vec3 rel = mod(base - uCam + BOX * 0.5, BOX) - BOX * 0.5;
-  vec3 w = uCam + rel;
-  vec4 mv = viewMatrix * vec4(w, 1.0);
-  float dist = -mv.z;
-  vA = smoothstep(4.0, 14.0, dist) * (1.0 - smoothstep(70.0, 100.0, dist)) * (0.3 + 0.7 * aSeed.z);
-  gl_PointSize = aSize * uPixelRatio * clamp(120.0 / max(dist, 1.0), 0.8, 3.0);
-  gl_Position = projectionMatrix * mv;
-}`
-
-const MOTE_FRAG = `
-varying float vA;
-void main() {
-  vec2 p = gl_PointCoord * 2.0 - 1.0;
-  float g = exp(-dot(p, p) * 4.0);
-  gl_FragColor = vec4(vec3(0.7, 0.85, 1.0), g * vA * 0.45);
+  // Lit from below by the city: the underside glows warm orange, higher up it turns mauve.
+  float under = 1.0 - smoothstep(0.1, 0.5, h);
+  vec3 tint = mix(uCloudLow, uCloudHigh, smoothstep(0.2, 0.6, h));
+  gl_FragColor = vec4(tint * (0.45 + 0.55 * under), cloud * band * 0.22 * uSheets);
 }`
 
 const FOG_BANKS = [
-  { y: 0.8, scale: 0.0075, speed: 0.012, alpha: 0.16, seed: 1.3 },
-  { y: 1.8, scale: 0.0055, speed: -0.008, alpha: 0.12, seed: 7.9 },
-  { y: 3.0, scale: 0.0105, speed: 0.02, alpha: 0.08, seed: 14.2 }
+  { y: 0.8, scale: 0.0075, speed: 0.012, alpha: 0.2, seed: 1.3 },
+  { y: 1.8, scale: 0.0055, speed: -0.008, alpha: 0.14, seed: 7.9 },
+  { y: 3.0, scale: 0.0105, speed: 0.02, alpha: 0.1, seed: 14.2 }
 ] as const
 
-const MOTE_COUNT = 360
+const MID_BANKS = [
+  { y: 22, scale: 0.0045, speed: 0.006, alpha: 0.2, seed: 3.7 },
+  { y: 40, scale: 0.0032, speed: -0.004, alpha: 0.14, seed: 11.4 }
+] as const
 
-function makeFogMaterial(b: (typeof FOG_BANKS)[number]): ShaderMaterial {
+function makeGroundHaze(b: (typeof FOG_BANKS)[number]): ShaderMaterial {
   return new ShaderMaterial({
     uniforms: {
       uTime: skyTime,
@@ -97,81 +109,91 @@ function makeFogMaterial(b: (typeof FOG_BANKS)[number]): ShaderMaterial {
       uSpeed: { value: b.speed },
       uAlpha: { value: b.alpha },
       uSeed: { value: b.seed },
-      uBank: { value: new Color('#1b2c58') },
-      uTeal: { value: new Color('#2fb8c8') },
-      uMag: { value: new Color('#9a4fc4') }
+      uHaze: colorU.haze
     },
     vertexShader: `varying vec3 vW;
       void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
-    fragmentShader: FOG_BANK_FRAG,
+    fragmentShader: HAZE_GROUND_FRAG,
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending
+  })
+}
+
+function makeMidHaze(b: (typeof MID_BANKS)[number]): ShaderMaterial {
+  return new ShaderMaterial({
+    uniforms: {
+      uTime: skyTime,
+      uScale: { value: b.scale },
+      uSpeed: { value: b.speed },
+      uAlpha: { value: b.alpha },
+      uSeed: { value: b.seed },
+      uHorizon: colorU.horizon,
+      uFog: colorU.fog
+    },
+    vertexShader: `varying vec3 vW;
+      void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+    fragmentShader: HAZE_MID_FRAG,
     transparent: true,
     depthWrite: false
   })
 }
 
-function makeMoteGeometry(): BufferGeometry {
-  const rnd = mulberry32(31)
-  const seed = new Float32Array(MOTE_COUNT * 3)
-  const size = new Float32Array(MOTE_COUNT)
-  const pos = new Float32Array(MOTE_COUNT * 3)
-  for (let i = 0; i < MOTE_COUNT; i++) {
-    seed[i * 3] = rnd()
-    seed[i * 3 + 1] = rnd()
-    seed[i * 3 + 2] = rnd()
-    size[i] = 1.2 + rnd() * 1.6
-  }
-  const g = new BufferGeometry()
-  g.setAttribute('position', new BufferAttribute(pos, 3))
-  g.setAttribute('aSeed', new BufferAttribute(seed, 3))
-  g.setAttribute('aSize', new BufferAttribute(size, 1))
-  return g
-}
-
 export function Atmosphere() {
-  const banks = useMemo(() => FOG_BANKS.map((b) => ({ y: b.y, mat: makeFogMaterial(b) })), [])
+  const ground = useMemo(() => FOG_BANKS.map((b) => ({ y: b.y, mat: makeGroundHaze(b) })), [])
+  const mid = useMemo(() => MID_BANKS.map((b) => ({ y: b.y, mat: makeMidHaze(b) })), [])
   const bankGeo = useMemo(() => new PlaneGeometry(1500, 1500), [])
+  const scatterMat = useMemo(() => new ShaderMaterial({
+    uniforms: {
+      uTime: skyTime,
+      uHaze: colorU.haze,
+      uScatter: levelU.scatter,
+      uDensity: { value: 0.6 }
+    },
+    vertexShader: DOME_VERT,
+    fragmentShader: SCATTER_FRAG,
+    side: BackSide,
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending
+  }), [])
+  const scatterGeo = useMemo(() => new SphereGeometry(880, 48, 24), [])
   const cloudMat = useMemo(() => new ShaderMaterial({
-    uniforms: { uTime: skyTime },
+    uniforms: {
+      uTime: skyTime,
+      uCloudLow: colorU.cloudLow,
+      uCloudHigh: colorU.cloudHigh,
+      uSheets: levelU.sheets
+    },
     vertexShader: DOME_VERT,
     fragmentShader: CLOUD_FRAG,
     side: BackSide,
     transparent: true,
     depthWrite: false
   }), [])
-  const cloudGeo = useMemo(() => new SphereGeometry(880, 48, 24), [])
-  const moteGeo = useMemo(() => makeMoteGeometry(), [])
-  const moteMat = useMemo(() => new ShaderMaterial({
-    uniforms: {
-      uTime: skyTime,
-      uCam: { value: new Vector3() },
-      uPixelRatio: { value: 1 }
-    },
-    vertexShader: MOTE_VERT,
-    fragmentShader: MOTE_FRAG,
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending
-  }), [])
+  const cloudGeo = useMemo(() => new SphereGeometry(870, 48, 24), [])
 
-  useFrame(({ camera, gl }) => {
-    moteMat.uniforms.uCam!.value.copy(camera.position)
-    moteMat.uniforms.uPixelRatio!.value = gl.getPixelRatio()
+  // Lit window density drives the scatter: a dense city glows more. Clamped so a small repo still has a glow.
+  useFrame(() => {
+    const n = useSky.getState().layout?.buildings.length ?? 0
+    scatterMat.uniforms.uDensity!.value = Math.min(1, Math.max(0.3, n / 350))
   })
 
   useEffect(() => () => {
-    for (const b of banks) b.mat.dispose()
+    for (const b of ground) b.mat.dispose()
+    for (const b of mid) b.mat.dispose()
     bankGeo.dispose()
+    scatterMat.dispose()
+    scatterGeo.dispose()
     cloudMat.dispose()
     cloudGeo.dispose()
-    moteGeo.dispose()
-    moteMat.dispose()
-  }, [banks, bankGeo, cloudMat, cloudGeo, moteGeo, moteMat])
+  }, [ground, mid, bankGeo, scatterMat, scatterGeo, cloudMat, cloudGeo])
 
   return (
     <>
-      {banks.map((b) => (
+      {ground.map((b) => (
         <mesh
-          key={b.y}
+          key={`g${b.y}`}
           geometry={bankGeo}
           material={b.mat}
           position={[0, b.y, 0]}
@@ -180,8 +202,19 @@ export function Atmosphere() {
           renderOrder={-2}
         />
       ))}
+      <mesh geometry={scatterGeo} material={scatterMat} frustumCulled={false} renderOrder={-3} />
       <mesh geometry={cloudGeo} material={cloudMat} frustumCulled={false} renderOrder={-3} />
-      <points geometry={moteGeo} material={moteMat} frustumCulled={false} renderOrder={3} />
+      {mid.map((b) => (
+        <mesh
+          key={`m${b.y}`}
+          geometry={bankGeo}
+          material={b.mat}
+          position={[0, b.y, 0]}
+          rotation={[-Math.PI / 2, 0, 0]}
+          frustumCulled={false}
+          renderOrder={-1}
+        />
+      ))}
     </>
   )
 }

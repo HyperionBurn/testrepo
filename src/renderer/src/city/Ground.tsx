@@ -11,7 +11,8 @@ import type { CityDistrict } from '@shared/types'
 import type { NeighborhoodIndex } from '@shared/layout'
 import { useSky } from '../state/store'
 import { isClick } from './registry'
-import { FOG_DENSITY, FOG_HEX } from './Sky'
+import { FOG_HEX } from './Sky'
+import { HAZE_DENSITY } from './metro'
 import { placeLabels, type LabelCandidate, type PlacedLabel } from './labelLayout'
 
 const PLATE_HEIGHT_PER_DEPTH = 0.08
@@ -30,6 +31,15 @@ uniform vec3 uGrid;
 uniform vec3 uFog;
 uniform float uDensity;
 varying vec3 vW;
+float hash21(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+float vnoise2(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x), mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
 float gridLine(vec2 p, float s) {
   vec2 c = p / s;
   vec2 fw = max(fwidth(c), vec2(1e-5));
@@ -47,6 +57,12 @@ void main() {
   // Beyond the city the plate is faintly mottled, so the ground reads as terrain, not a black void.
   float mott = sin(p.x * 0.013 + sin(p.y * 0.021)) * sin(p.y * 0.011 + 1.3) * 0.5 + 0.5;
   col *= 0.8 + 0.4 * mott;
+  // Asphalt and foundation grain under the metropolis: fine speckle plus a few darker patches, faintly lit by the glow.
+  float speck = hash21(floor(p * 0.9));
+  float blotch = smoothstep(0.55, 0.9, vnoise2(p * 0.006));
+  col *= 0.85 + 0.3 * speck;
+  col = mix(col, col * 0.55, blotch * 0.6);
+  col += vec3(0.05, 0.035, 0.02) * smoothstep(120.0, 900.0, length(p)) * speck * 0.05;
   float dist = length(vW - cameraPosition);
   float fog = 1.0 - exp(-pow(dist * uDensity, 2.0));
   gl_FragColor = vec4(mix(col, uFog, fog), 1.0);
@@ -58,7 +74,7 @@ export function Ground() {
       uBase: { value: new Color('#03050b') },
       uGrid: { value: new Color('#3d6bff') },
       uFog: { value: new Color(FOG_HEX) },
-      uDensity: { value: FOG_DENSITY }
+      uDensity: { value: HAZE_DENSITY }
     },
     vertexShader: GROUND_VERT,
     fragmentShader: GROUND_FRAG
@@ -75,7 +91,7 @@ export function Ground() {
       }}
       onPointerOut={() => useSky.getState().hover(null)}
     >
-      <planeGeometry args={[3200, 3200]} />
+      <planeGeometry args={[4400, 4400]} />
     </mesh>
   )
 }

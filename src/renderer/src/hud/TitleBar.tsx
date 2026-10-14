@@ -4,6 +4,7 @@ import { useUi } from '../lib/ui'
 import { compactNumber, usd } from '../lib/format'
 import { useNow } from '../lib/hooks'
 import { pickAndOpen } from '../lib/actions'
+import { TIME_OF_DAY_LABEL } from '../city/skyPresets'
 import { CaptureMenu } from './Capture'
 import { IconChevronDown, IconFolder, IconGitBranch, IconMinus, IconSearch, IconSquare, IconVideo, IconX, SkylineGlyph } from './icons'
 
@@ -19,6 +20,7 @@ export function TitleBar() {
   const mode = useSky((s) => s.mode)
   const director = useSky((s) => s.director)
   const reduced = useSky((s) => s.reducedMotion)
+  const timeOfDay = useSky((s) => s.timeOfDay)
   const now = useNow(30_000)
   const platform = window.skyline.platform
   const isWin = platform === 'win32'
@@ -108,6 +110,14 @@ export function TitleBar() {
           <span className="muted">Director</span>
         </button>
       )}
+
+      <button
+        className="capsule capsule--ghost capsule--sm"
+        onClick={() => useSky.getState().cycleTimeOfDay()}
+        title={`Sky: ${TIME_OF_DAY_LABEL[timeOfDay]}. Click or press T to cycle blue hour, night, dawn`}
+      >
+        <span className="muted">{TIME_OF_DAY_LABEL[timeOfDay]}</span>
+      </button>
 
       {repo ? (
         <button className="capsule capsule--ghost capsule--sm" onClick={() => void pickAndOpen()} title="Open another repository (Ctrl O)">

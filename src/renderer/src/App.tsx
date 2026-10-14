@@ -106,6 +106,12 @@ function onKeyDown(e: KeyboardEvent): void {
     case 'c':
       s.cycleColorMode()
       break
+    case 'b':
+      s.toggleBuildingStyle()
+      break
+    case 't':
+      s.cycleTimeOfDay()
+      break
     case 'v':
       if (s.repo) s.toggleDirector()
       break

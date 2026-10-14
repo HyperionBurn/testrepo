@@ -11,12 +11,20 @@ import { Atmosphere } from './Atmosphere'
 import { Backdrop } from './Backdrop'
 import { Ground, Districts } from './Ground'
 import { GroundGlow } from './Glow'
+import { Metropolis } from './Metropolis'
+import { Water } from './Water'
+import { Bridges } from './Bridges'
+import { Boats } from './Boats'
+import { Helicopters } from './Helicopters'
 import { Buildings } from './Buildings'
 import { Roads } from './Roads'
 import { Scaffolding, Spotlight, ImportArcs } from './Overlays'
 import { Drones } from './Drones'
 import { FxStage } from './FxStage'
 import { Traffic } from './Traffic'
+import { Rooftops } from './Rooftops'
+import { Signage } from './Signage'
+import { Steam } from './Steam'
 import { CameraRig } from './CameraRig'
 import { Effects } from './Effects'
 import { serviceGrab } from './capture'
@@ -101,9 +109,17 @@ export default function CityCanvas() {
         <Atmosphere />
         <Ground />
         <GroundGlow />
+        <Metropolis />
+        <Water />
+        <Bridges />
+        <Boats />
+        <Helicopters />
         <CityDistricts />
         <Roads />
         <Buildings />
+        <Rooftops />
+        <Signage />
+        <Steam />
         <Scaffolding />
         <Spotlight />
         <ImportArcs />

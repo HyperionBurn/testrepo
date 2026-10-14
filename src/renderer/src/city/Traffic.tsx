@@ -1,21 +1,22 @@
-// Night traffic: every car is one additive light streak (white/amber/red/agent-coloured), drawn as a quad
-// that trails back along its lane. All cars share one dynamic BufferGeometry (four vertices per car, a fixed
-// index buffer), rewritten on the CPU in one frame loop with no per-frame allocation. Far cars are culled and
-// mid-range cars are thinned by drawing a compacted prefix. Cars slow down near hot files (construction).
-// A new agent sends a delivery convoy from the city edge to its current file's district.
+// Night traffic: the car simulation (lanes.ts stepTraffic: lanes, car-following, signals), drawn as real vehicles
+// (Vehicles.tsx), traffic signals (Signals.tsx) and pedestrians (Pedestrians.tsx). The simulation is CPU, in typed
+// arrays, with no per-frame allocation to speak of. Cars slow down near hot files (construction), a new agent sends a
+// delivery convoy from the city edge, and with reduced motion nothing moves: only parked cars glow, and the signals
+// hold their phase. Aircraft share this mount (Aircraft.tsx).
 import { useEffect, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
-import {
-  AdditiveBlending, BufferAttribute, BufferGeometry, Color, DoubleSide, Mesh, ShaderMaterial, type PerspectiveCamera
-} from 'three'
+import { Color, Group, PerspectiveCamera, type Object3D } from 'three'
 import type { AgentInfo, CityLayout } from '@shared/types'
 import { buildingCenter, findBuilding } from '@shared/layout'
 import { useSky, type Heat } from '../state/store'
 import {
-  buildLanes, componentOf, createVehicles, lanePoint, mulberry32, routeTo, stepVehicle,
-  type Network, type Rng, type VehicleState
+  buildLanes, componentOf, createVehicles, mulberry32, routeTo, stepTraffic, vehicleBudget,
+  type Network, type Rng, type TrafficContext, type VehicleState
 } from './lanes'
 import { Aircraft, advanceAircraft } from './Aircraft'
+import { KIND_TRUCK, VehicleLayer, paintFor, parkedGlow, pickKind, type VehicleFeed } from './Vehicles'
+import { SignalLayer } from './Signals'
+import { PedestrianLayer } from './Pedestrians'
 
 declare global {
   interface Window {
@@ -24,119 +25,66 @@ declare global {
   }
 }
 
-/** One car per this many units of lane. */
-const LANE_PER_CAR = 4
-const MAX_CARS = 600
-/** Vehicle slots reserved for delivery convoys (the first ones in the arrays). */
-const CONVOY_SLOTS = 18
-const CONVOY_SIZE = 3
 /** Cars within this distance of a hot file slow down; the ramp reaches full speed at the edge. */
 const HOT_RADIUS = 4
 const HOT_WINDOW_MS = 90_000
-/** Culling from the camera: beyond FAR no car is drawn; beyond MID only every other car. The framed view sits ~330 up. */
-const FAR = 520
-const MID = 380
-// Above the tallest plate (0.08 per depth, so depth 4 tops out at 0.32).
-const LIGHT_Y = 0.38
-const SUB_STEP = 1 / 20
-/** Streak width in world units, and the minimum on screen (about 1.7 px), so distant cars still catch the bloom. */
-const WIDTH = 0.12
-const MIN_PX = 1.1
-/** Streaks fade out inside FADE_NEAR of the camera (so close-ups stay clean) and are full beyond FADE_FAR. */
-const FADE_NEAR = 15
-const FADE_FAR = 60
+/** Vehicle slots reserved for delivery convoys (the first ones in the arrays). */
+const CONVOY_SLOTS = 18
+const CONVOY_SIZE = 3
+/** Simulation sub-step of the frame loop, and the most real time one frame may simulate. */
+const MAX_FRAME_STEP = 0.05
+/** Pedestrians advance in these steps, so a long fast-forward keeps them on the sidewalks. */
+const PED_STEP = 1 / 20
 
-const VERT = `
-attribute vec2 aCorner;
-attribute vec3 aTrail;
-attribute vec4 aColor;
-uniform float uWidth;
-uniform float uPxWorld;
-varying vec2 vUv;
-varying vec3 vColor;
-varying float vAlpha;
-void main() {
-  vec3 head = position;
-  vec3 tail = head - vec3(aTrail.x, 0.0, aTrail.y) * aTrail.z;
-  vec3 along = mix(tail, head, aCorner.x);
-  float dist = length(cameraPosition - head);
-  float fade = smoothstep(${FADE_NEAR.toFixed(1)}, ${FADE_FAR.toFixed(1)}, dist);
-  float w = max(uWidth, dist * uPxWorld * ${MIN_PX.toFixed(1)}) * (0.35 + 0.65 * fade);
-  vec3 side = vec3(-aTrail.y, 0.0, aTrail.x);
-  vec3 p = along + side * (aCorner.y * w);
-  vUv = vec2(aCorner.x, aCorner.y + 0.5);
-  vColor = aColor.rgb;
-  vAlpha = aColor.a * fade;
-  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
-}`
-
-// Long-exposure profile: a faint tail that brightens into the head. The last part of it blooms.
-const FRAG = `
-uniform float uGain;
-varying vec2 vUv;
-varying vec3 vColor;
-varying float vAlpha;
-void main() {
-  float along = vUv.x;
-  float across = clamp(1.0 - abs(vUv.y - 0.5) * 2.0, 0.0, 1.0);
-  float core = pow(across, 1.4);
-  float intensity = 0.35 * along + pow(along, 4.0) + 2.5 * pow(along, 18.0);
-  vec3 tailCol = vec3(1.0, 0.14, 0.06);
-  vec3 col = mix(tailCol, vColor, smoothstep(0.3, 1.0, along));
-  gl_FragColor = vec4(col * uGain * intensity * core * vAlpha, 1.0);
-}`
-
-/** Light-streak palette: head colour per car, weighted. The tail is always red. */
-function carColor(r: number, out: Float32Array, o: number): void {
-  let c: [number, number, number]
-  if (r < 0.55) c = [1.0, 0.94, 0.84]
-  else if (r < 0.75) c = [1.0, 0.55, 0.15]
-  else if (r < 0.85) c = [1.0, 0.16, 0.08]
-  else if (r < 0.93) c = [0.35, 0.9, 1.0]
-  else c = [1.0, 0.25, 0.95]
-  out[o] = c[0]
-  out[o + 1] = c[1]
-  out[o + 2] = c[2]
-}
-
-function smooth(a: number, b: number, x: number): number {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
-  return t * t * (3 - 2 * t)
+/** Whether the road surface and street furniture use the Kenney tiles (stylized) or the procedural road. */
+export function usesStylizedRoads(): boolean {
+  return (useSky.getState() as unknown as { buildingStyle?: string }).buildingStyle === 'stylized'
 }
 
 interface World {
-  layout: CityLayout;
-  net: Network;
-  comp: Int32Array;
-  vehicles: VehicleState;
-  rng: Rng;
-  /** Per-vehicle head colour (rgb). */
-  colors: Float32Array;
+  layout: CityLayout
+  net: Network
+  comp: Int32Array
+  vehicles: VehicleState
+  rng: Rng
+  kinds: Uint8Array
+  body: Float32Array
+  head: Float32Array
   /** Per-segment bounding boxes, for the distance test against hot files. */
-  sx0: Float32Array; sz0: Float32Array; sx1: Float32Array; sz1: Float32Array;
+  sx0: Float32Array; sz0: Float32Array; sx1: Float32Array; sz1: Float32Array
   /** Per-segment speed multiplier, 1 = free flow. */
-  drag: Float32Array;
-  /** Nodes on the city edge in the largest component, where convoys enter. */
-  edgeNodes: number[];
-  /** Next-hop tables by goal node. */
-  routes: Map<number, Int32Array>;
-  scratch: Float32Array;
-  position: Float32Array; corner: Float32Array; trail: Float32Array; tint: Float32Array;
-  geometry: BufferGeometry;
-  material: ShaderMaterial;
-  mesh: Mesh;
+  drag: Float32Array
+  edgeNodes: number[]
+  routes: Map<number, Int32Array>
+  ctx: TrafficContext
+  feed: VehicleFeed
+  layer: VehicleLayer
+  signals: SignalLayer
+  peds: PedestrianLayer
+  group: Group
 }
 
 function buildWorld(layout: CityLayout): World {
   const net = buildLanes(layout)
   const comp = componentOf(net)
-  const count = Math.min(MAX_CARS, Math.floor(net.totalLength / LANE_PER_CAR))
+  const count = vehicleBudget(net.totalLength)
   const rng = mulberry32(0x5eed)
   const vehicles = createVehicles(count, net, rng, 2.6, 5)
   const n = vehicles.count
-
-  const colors = new Float32Array(Math.max(1, n) * 3)
-  for (let i = 0; i < n; i++) carColor(rng(), colors, i * 3)
+  const kinds = new Uint8Array(Math.max(1, n))
+  const body = new Float32Array(Math.max(1, n) * 3)
+  const head = new Float32Array(Math.max(1, n) * 3)
+  for (let i = 0; i < n; i++) {
+    const kind = pickKind(rng())
+    kinds[i] = kind
+    const [r, g, b] = paintFor(kind, rng())
+    body[i * 3] = r
+    body[i * 3 + 1] = g
+    body[i * 3 + 2] = b
+    head[i * 3] = 1
+    head[i * 3 + 1] = 0.95
+    head[i * 3 + 2] = 0.84
+  }
 
   const segCount = net.segments.length
   const sx0 = new Float32Array(segCount), sz0 = new Float32Array(segCount)
@@ -162,60 +110,22 @@ function buildWorld(layout: CityLayout): World {
     }
   }
   const edgeNodes = net.nodes
-    .filter((nd) => comp[nd.id] === mainComp && (Math.abs(nd.x) > 56 || Math.abs(nd.z) > 56))
+    .filter((nd) => comp[nd.id] === mainComp && (Math.abs(nd.x) > layout.size / 2 - 8 || Math.abs(nd.z) > layout.size / 2 - 8))
     .map((nd) => nd.id)
 
-  // Four vertices per car; the index buffer is fixed, and a draw range covers the cars drawn this frame.
-  const cars = Math.max(1, n)
-  const position = new Float32Array(cars * 4 * 3)
-  const corner = new Float32Array(cars * 4 * 2)
-  const trail = new Float32Array(cars * 4 * 3)
-  const tint = new Float32Array(cars * 4 * 4)
-  const index = new Uint16Array(cars * 6)
-  const CORNERS = [0, -0.5, 1, -0.5, 1, 0.5, 0, 0.5]
-  for (let j = 0; j < cars; j++) {
-    for (let c = 0; c < 4; c++) {
-      corner[(j * 4 + c) * 2] = CORNERS[c * 2]!
-      corner[(j * 4 + c) * 2 + 1] = CORNERS[c * 2 + 1]!
-    }
-    const b = j * 4
-    index.set([b, b + 1, b + 2, b, b + 2, b + 3], j * 6)
-  }
-  const geometry = new BufferGeometry()
-  geometry.setAttribute('position', new BufferAttribute(position, 3))
-  geometry.setAttribute('aCorner', new BufferAttribute(corner, 2))
-  geometry.setAttribute('aTrail', new BufferAttribute(trail, 3))
-  geometry.setAttribute('aColor', new BufferAttribute(tint, 4))
-  geometry.setIndex(new BufferAttribute(index, 1))
-  geometry.setDrawRange(0, 0)
-
-  const material = new ShaderMaterial({
-    uniforms: {
-      uWidth: { value: WIDTH },
-      uPxWorld: { value: 0.002 },
-      uGain: { value: 2.2 }
-    },
-    vertexShader: VERT,
-    fragmentShader: FRAG,
-    transparent: true,
-    // Depth-tested against the towers so buildings occlude the trails; the trails do not write depth.
-    depthTest: true,
-    depthWrite: false,
-    // Every quad has the same winding, so FrontSide would cull them all from one side of the city.
-    side: DoubleSide,
-    blending: AdditiveBlending
-  })
-  const mesh = new Mesh(geometry, material)
-  mesh.frustumCulled = false
-  mesh.renderOrder = 3
+  const ctx: TrafficContext = { clock: 0, pending: new Int32Array(Math.max(1, n)).fill(-1), drag: new Float32Array(segCount).fill(1) }
+  const layer = new VehicleLayer(Math.max(1, n))
+  const signals = new SignalLayer(net)
+  const peds = new PedestrianLayer(layout, net)
+  const group = new Group()
+  group.name = 'skyline-traffic'
+  group.add(layer.group, signals.lights.points, peds.points)
 
   return {
-    layout, net, comp, vehicles, rng, colors, sx0, sz0, sx1, sz1,
-    drag: new Float32Array(segCount).fill(1),
-    edgeNodes,
-    routes: new Map(),
-    scratch: new Float32Array(3),
-    position, corner, trail, tint, geometry, material, mesh
+    layout, net, comp, vehicles: { ...vehicles, count: n }, rng, kinds, body, head,
+    sx0, sz0, sx1, sz1, drag: ctx.drag!, edgeNodes, routes: new Map(), ctx,
+    feed: { net, vehicles, kinds, body, head },
+    layer, signals, peds, group
   }
 }
 
@@ -240,7 +150,7 @@ function computeDrag(w: World, heat: Record<string, Heat>, now: number): void {
   }
 }
 
-/** A delivery convoy: CONVOY_SIZE vehicles from the city edge to the district of the agent's current file. */
+/** A delivery convoy: CONVOY_SIZE trucks from the city edge to the district of the agent's current file. */
 function spawnConvoy(w: World, agent: AgentInfo, slot0: number): void {
   const net = w.net
   if (w.edgeNodes.length === 0) return
@@ -281,19 +191,25 @@ function spawnConvoy(w: World, agent: AgentInfo, slot0: number): void {
     v.cruise[slot] = 5.6 + k * 0.25
     v.speed[slot] = v.cruise[slot]!
     v.routes[slot] = table
-    // Convoys carry the agent's colour as their head light.
-    w.colors[slot * 3] = rgb.r
-    w.colors[slot * 3 + 1] = rgb.g
-    w.colors[slot * 3 + 2] = rgb.b
+    w.ctx.pending[slot] = -1
+    // Convoys are trucks in the agent's colour, with the agent's colour on their headlights.
+    w.kinds[slot] = KIND_TRUCK
+    w.body[slot * 3] = rgb.r
+    w.body[slot * 3 + 1] = rgb.g
+    w.body[slot * 3 + 2] = rgb.b
+    w.head[slot * 3] = rgb.r
+    w.head[slot * 3 + 1] = rgb.g
+    w.head[slot * 3 + 2] = rgb.b
   }
 }
 
-/** Advances the simulation by `seconds`, in fixed sub-steps so fast-forward matches a normal run. */
+/** Advances the simulation by `seconds`: cars with stepTraffic (it sub-steps), pedestrians in fixed steps. */
 function simulate(w: World, seconds: number): void {
+  stepTraffic(w.vehicles, seconds, w.net, w.rng, w.ctx)
   let left = seconds
   while (left > 1e-6) {
-    const h = Math.min(SUB_STEP, left)
-    stepVehicle(w.vehicles, h, w.net, w.rng, w.drag)
+    const h = Math.min(PED_STEP, left)
+    w.peds.advance(h)
     left -= h
   }
 }
@@ -308,31 +224,18 @@ const frameNo = new WeakMap<World, number>()
 const lastHeat = new WeakMap<World, Record<string, Heat>>()
 const lastAgents = new WeakMap<World, AgentInfo[]>()
 
-/** Writes car `j` (four vertices) into the buffers. */
-function putCar(
-  w: World, j: number, hx: number, hy: number, hz: number,
-  ux: number, uz: number, len: number, r: number, g: number, b: number, a: number
-): void {
-  for (let c = 0; c < 4; c++) {
-    const v = j * 4 + c
-    w.position[v * 3] = hx
-    w.position[v * 3 + 1] = hy
-    w.position[v * 3 + 2] = hz
-    w.trail[v * 3] = ux
-    w.trail[v * 3 + 1] = uz
-    w.trail[v * 3 + 2] = len
-    w.tint[v * 4] = r
-    w.tint[v * 4 + 1] = g
-    w.tint[v * 4 + 2] = b
-    w.tint[v * 4 + 3] = a
-  }
+function smooth(a: number, b: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
+  return t * t * (3 - 2 * t)
 }
 
+/** The moving city: cars, signals and people, stepped and drawn every frame. */
 function Streets({ layout }: { layout: CityLayout }) {
   const world = useMemo(() => buildWorld(layout), [layout])
   useEffect(() => () => {
-    world.geometry.dispose()
-    world.material.dispose()
+    world.layer.dispose()
+    world.signals.dispose()
+    world.peds.dispose()
   }, [world])
 
   useEffect(() => {
@@ -380,50 +283,51 @@ function Streets({ layout }: { layout: CityLayout }) {
       simulate(w, pendingAdvance)
       pendingAdvance = 0
     } else {
-      simulate(w, Math.min(delta, 0.05))
+      simulate(w, Math.min(delta, MAX_FRAME_STEP))
     }
 
-    // Vertex data, with distance culling and thinning.
-    const cam = camera.position
-    const v = w.vehicles
-    const net = w.net
+    // Drawing: vehicles, signals and people for this frame.
     const fov = ((camera as PerspectiveCamera).fov * Math.PI) / 180
-    w.material.uniforms.uPxWorld!.value = (2 * Math.tan(fov / 2)) / Math.max(1, size.height)
-    const sc = w.scratch
-    let k = 0
-    for (let i = 0; i < v.count; i++) {
-      lanePoint(net, v.seg[i]!, v.dir[i]!, v.t[i]!, sc, 0, LIGHT_Y)
-      const dx = sc[0]! - cam.x
-      const dy = sc[1]! - cam.y
-      const dz = sc[2]! - cam.z
-      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
-      if (dist > FAR) continue
-      if (dist > MID && (i & 1) === 1) continue
-      const fade = 1 - smooth(FAR - 40, FAR, dist)
-      const seg = net.segments[v.seg[i]!]!
-      const ux = v.dir[i]! * seg.ux
-      const uz = v.dir[i]! * seg.uz
-      const len = 3 + v.speed[i]! * 0.9
-      putCar(w, k, sc[0]!, sc[1]!, sc[2]!, ux, uz, len,
-        w.colors[i * 3]!, w.colors[i * 3 + 1]!, w.colors[i * 3 + 2]!, fade)
-      k++
-    }
-    carStats.total = v.count
-    carStats.drawn = k
-    w.geometry.setDrawRange(0, k * 6)
-    ;(w.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true
-    ;(w.geometry.getAttribute('aTrail') as BufferAttribute).needsUpdate = true
-    ;(w.geometry.getAttribute('aColor') as BufferAttribute).needsUpdate = true
+    const px = size.height / (2 * Math.tan(fov / 2))
+    const drawn = w.layer.update(w.feed, camera.position, px)
+    w.signals.write(w.ctx.clock, px)
+    w.peds.write(w.ctx.clock, px)
+    carStats.total = w.vehicles.count
+    carStats.drawn = drawn
   })
 
-  return <primitive object={world.mesh} />
+  return <primitive object={world.group} />
 }
 
-/** Traffic streets and the aircraft above the city. Renders nothing with reduced motion. */
+/** Parked cars and their dim glow, the signals frozen at their start phase: the reduced-motion city. */
+function StillCity({ layout }: { layout: CityLayout }) {
+  const still = useMemo(() => {
+    const net = buildLanes(layout)
+    const rng = mulberry32(0x9a7)
+    const parked = parkedGlow(net, Math.min(900, Math.floor(net.totalLength * 0.5)), rng)
+    const signals = new SignalLayer(net)
+    signals.write(0, 1000)
+    const group = new Group()
+    group.name = 'skyline-parked'
+    group.add(parked.points, signals.lights.points)
+    return { group, parked, signals }
+  }, [layout])
+  useEffect(() => () => {
+    still.parked.dispose()
+    still.signals.dispose()
+  }, [still])
+  useFrame(({ camera, size }) => {
+    const fov = ((camera as PerspectiveCamera).fov * Math.PI) / 180
+    still.parked.setPx(size.height / (2 * Math.tan(fov / 2)))
+  })
+  return <primitive object={still.group as Object3D} />
+}
+
+/** Traffic streets and the aircraft above the city. With reduced motion only the parked cars and signals remain. */
 export function Traffic() {
   const layout = useSky((s) => s.layout)
   const reduced = useSky((s) => s.reducedMotion)
-  if (reduced) return null
+  if (reduced) return layout ? <StillCity layout={layout} /> : null
   return (
     <>
       {layout && <Streets layout={layout} />}
@@ -431,3 +335,4 @@ export function Traffic() {
     </>
   )
 }
+

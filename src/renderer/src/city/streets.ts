@@ -152,7 +152,7 @@ export interface RoadTile { model: string; x: number; z: number; rot: number; sc
 export interface RoadLight { x: number; z: number; rot: number; model: string }
 export interface RoadPlan { tiles: RoadTile[]; lights: RoadLight[] }
 
-interface Grid {
+export interface Grid {
   n: number
   cell: number
   origin: number
@@ -318,10 +318,22 @@ function planOnGrid(g: Grid): RoadPlan {
  * The road network for a layout: deterministic, pure. Every street cell becomes one tile, so the cell count
  * decides the grid: the fine grid unless it would exceed MAX_TILES, then the 2-unit grid (scaled tiles).
  */
-export function buildRoadPlan(layout: CityLayout): RoadPlan {
+export function streetGrid(layout: CityLayout): Grid {
   let g = rasterise(layout, ROAD_CELL)
   let streets = 0
   for (const v of g.street) streets += v
   if (streets > MAX_TILES) g = rasterise(layout, COARSE_CELL)
-  return planOnGrid(g)
+  return g
+}
+
+export function buildRoadPlan(layout: CityLayout): RoadPlan {
+  return planOnGrid(streetGrid(layout))
+}
+
+/**
+ * Where a lamp's arm points, in world (x, z): the native arm (north, -z) turned by the lamp's rotation. The arm
+ * reaches from the pole toward the road.
+ */
+export function lampArmDirection(rot: number): [number, number] {
+  return rotateVec(0, -1, Math.round(rot / QUARTER))
 }

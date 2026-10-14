@@ -55,6 +55,7 @@ export function Buildings() {
   const hoveredPath = useSky((s) => s.hoveredPath)
   const selectedPath = useSky((s) => s.selectedPath)
   const plan = useSky((s) => s.colorPlan)
+  const style = useSky((s) => s.buildingStyle)
 
   const fieldRef = useRef<BuildingField | null>(null)
   const lastFrameMs = useRef<number | null>(null)
@@ -66,11 +67,13 @@ export function Buildings() {
   const colorsRef = useRef<ReadonlyMap<string, string> | null>(null)
   colorsRef.current = plan?.colors ?? null
 
-  // Built during render from the last committed field, so the animation state carries over.
+  // Built during render from the last committed field, so the animation state carries over. A style change rebuilds
+  // the field (the facades and the Kenney models are different meshes).
   const field = useMemo(() => {
     if (!layout) return null
     const s = useSky.getState()
     return new BuildingField(layout, mats, prevRef.current, {
+      style,
       mode: s.mode,
       gitTs: s.gitTs,
       firstSeen: s.firstSeen,
@@ -78,7 +81,7 @@ export function Buildings() {
       loc: locByPath(s.repo?.files ?? []),
       models: loaded
     })
-  }, [layout, mats])
+  }, [layout, mats, style])
 
   fieldRef.current = field
 
@@ -159,6 +162,8 @@ export function Buildings() {
     if (!f) return
     mats.time.value = state.clock.elapsedTime
     const s = useSky.getState()
+    // Natural is untinted; the data modes tint the lit windows, the crown and a little of the wall.
+    mats.tint.value = s.colorMode === 'natural' ? 0 : 1
     const now = s.mode === 'replay' && s.replayTs !== null ? s.replayTs : Date.now()
     const now0 = performance.now()
     const realDt = lastFrameMs.current === null ? dt : (now0 - lastFrameMs.current) / 1000

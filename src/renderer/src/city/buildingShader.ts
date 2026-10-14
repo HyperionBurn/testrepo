@@ -8,8 +8,12 @@ import { MeshStandardMaterial, type Texture } from 'three'
 export interface BuildingMaterials {
   models: MeshStandardMaterial;
   boxes: MeshStandardMaterial;
-  /** Seconds. Shared by both materials: drives windows, pulses and the scanline. */
+  /** The 'real' style: procedural facades on unit templates (facade/templates.ts). */
+  facade: MeshStandardMaterial;
+  /** Seconds. Shared by every material: drives windows, pulses and the scanline. */
   time: { value: number };
+  /** 0 in the natural colour mode (no tint), 1 in the data modes (area, language, churn, age). */
+  tint: { value: number };
 }
 
 const INSTANCE_ATTRS = `
@@ -120,6 +124,170 @@ emit += vec3(0.45, 0.82, 1.0) * vShim * (0.15 + 1.8 * band + 0.25 * fres);
 totalEmissiveRadiance = emit;
 `
 
+
+// ---------- facades (the 'real' style) ----------
+// One window grid per facade, anchored to the footprint and to world height, so tiers and sides line up. Every
+// building has a palette, a lit fraction and a window pitch from its path seed. Windows are shader work, not geometry:
+// a pane is lit or dark as a whole, runs of panes light together along a floor, and whole office floors light at once.
+// Where a pane covers less than about two pixels, the shader fades it to its average brightness, so a distant tower
+// reads as a lit grid rather than noise. Colour comes from light: the walls are dark and neutral; the tint modes shift
+// the lit-window hue, the crown and a little of the wall.
+
+const FACADE_VARYINGS = `
+varying float vFaceId;
+varying float vU;
+varying float vY;
+varying float vYFrac;
+varying float vTierBot;
+varying float vTierTop;
+varying vec3 vSize;
+varying float vSeed;
+varying vec3 vLang;
+varying vec3 vGlowCol;
+varying float vGlow;
+varying float vSel;
+varying float vShim;
+`
+
+const FACADE_VERT_DECL = `${INSTANCE_ATTRS}attribute vec4 aFace;\n${FACADE_VARYINGS}`
+
+// aSize is (footprint x, rendered height, footprint z). aFace.y is the absolute coordinate along the face in footprint
+// units, so multiplying by the footprint side gives the world coordinate that every tier shares.
+const FACADE_VERT_BODY = `
+#include <begin_vertex>
+float isXF = (abs(aFace.x - 1.0) < 0.5 || abs(aFace.x - 3.0) < 0.5) ? 1.0 : 0.0;
+vU = aFace.y * mix(aSize.x, aSize.z, isXF);
+vY = position.y * aSize.y;
+vYFrac = position.y;
+vFaceId = aFace.x;
+vTierBot = aFace.z;
+vTierTop = aFace.w;
+vSize = aSize;
+vSeed = aSeed;
+vLang = aLang;
+vGlowCol = aGlowColor;
+vGlow = aGlow;
+vSel = aSel;
+vShim = aShim;
+`
+
+const FACADE_FRAG_DECL = `
+uniform float uTime;
+uniform float uTint;
+${FACADE_VARYINGS}
+// Values the colour stage hands to the emission stage (the normal is only ready there).
+float fMask;
+float fDetail;
+float fLit;
+float fLitA;
+float fWinArea;
+vec3 fWinCol;
+float fhash(vec3 p) {
+  p = fract(p * 0.1031);
+  p += dot(p, p.zyx + 31.32);
+  return fract((p.x + p.y) * p.z);
+}
+`
+
+// Walls and window panes. Palette by seed: brown brick, grey concrete, limestone, black glass, blue-grey glass.
+const FACADE_FRAG_COLOR = `
+#include <color_fragment>
+float pal = floor(fhash(vec3(vSeed * 91.7, 3.1, 7.7)) * 5.0);
+vec3 wall = pal < 0.5 ? vec3(0.20, 0.11, 0.08)
+  : pal < 1.5 ? vec3(0.17, 0.17, 0.18)
+  : pal < 2.5 ? vec3(0.30, 0.285, 0.255)
+  : pal < 3.5 ? vec3(0.035, 0.04, 0.05)
+  : vec3(0.085, 0.11, 0.15);
+float glassy = step(2.5, pal);
+wall *= 0.86 + 0.28 * fhash(vec3(vSeed * 11.3, 1.0, 2.0));
+// Brick and concrete grain, faded out where a texel is smaller than a pixel.
+vec2 tex = vec2(vU * 14.0, vY * 22.0);
+vec2 fwT = fwidth(tex);
+float texFade = (1.0 - smoothstep(0.4, 0.9, max(fwT.x, fwT.y))) * (1.0 - glassy);
+wall *= mix(1.0, 0.85 + 0.3 * fhash(vec3(floor(tex), vSeed)), texFade);
+
+float pitch = mix(0.12, 0.20, fhash(vec3(vSeed * 37.1, 5.0, 2.0)));
+float litA = mix(0.35, 0.55, fhash(vec3(vSeed * 53.3, 1.0, 9.0)));
+vec2 g = vec2(vU / pitch, vY / 0.16);
+vec2 cell = floor(g);
+vec2 f = fract(g);
+vec2 fw = max(fwidth(g), vec2(1e-4));
+fDetail = 1.0 - smoothstep(0.28, 0.5, max(fw.x, fw.y));
+float mx0 = mix(0.16, 0.05, glassy);
+float mx1 = 1.0 - mx0;
+float my0 = mix(0.26, 0.05, glassy);
+float my1 = mix(0.84, 0.95, glassy);
+float winX = smoothstep(mx0 - fw.x, mx0 + fw.x, f.x) * (1.0 - smoothstep(mx1 - fw.x, mx1 + fw.x, f.x));
+float winY = smoothstep(my0 - fw.y, my0 + fw.y, f.y) * (1.0 - smoothstep(my1 - fw.y, my1 + fw.y, f.y));
+float fMaskLocal = winX * winY;
+fMask = fMaskLocal;
+fWinArea = (mx1 - mx0) * (my1 - my0);
+
+// Lit state: per pane, in runs of three along a floor, with whole office floors and dark floors.
+float hw = fhash(vec3(cell, vSeed * 7.0));
+float hr = fhash(vec3(floor(cell.x / 3.0), cell.y, vSeed * 13.0 + 1.0));
+float hf = fhash(vec3(cell.y, vSeed * 5.0, 3.0));
+float lv = 0.6 * hw + 0.25 * hr + 0.15 * hf;
+float lit = step(1.0 - litA, lv);
+lit = max(lit, step(0.94, hf));
+lit *= step(0.05, hf);
+// A few panes change slowly: the flicker of a light switched on or off.
+float fl = step(0.985, fhash(vec3(cell, floor(uTime * 0.2 + vSeed * 10.0) + vSeed * 3.0)));
+fLit = abs(lit - fl);
+fLitA = litA + 0.04;
+
+// Warm 2400–3200 K 70 %, cool white 20 %, TV blue 10 %.
+float wc = fhash(vec3(cell * 1.3, vSeed * 2.7 + 4.0));
+vec3 warm = mix(vec3(1.0, 0.64, 0.28), vec3(1.0, 0.77, 0.45), fhash(vec3(cell, 9.0 + vSeed)));
+vec3 winCol = wc < 0.7 ? warm : (wc < 0.9 ? vec3(0.84, 0.92, 1.0) : vec3(0.36, 0.62, 1.0));
+fWinCol = mix(winCol, vLang, 0.5 * uTint);
+
+vec3 glass = mix(vec3(0.012, 0.016, 0.026), vec3(0.03, 0.04, 0.07), glassy);
+float share = mix(fWinArea, fMaskLocal, fDetail);
+vec3 col = mix(wall, glass, share);
+col = mix(col, col * (0.6 + vLang * 1.6), 0.35 * uTint);
+// Shopfront: the ground two floors are dark glass and tile.
+float sfY = 1.0 - smoothstep(0.30, 0.34, vY);
+col = mix(col, vec3(0.02, 0.018, 0.016), sfY * 0.8);
+// Roofs are dark tar.
+col = vFaceId > 3.5 ? vec3(0.04, 0.04, 0.045) : col;
+diffuseColor.rgb = col;
+`
+
+// Emission: lit panes, unlit glass reflecting the sky, shopfront signs, crown edges, tint glow, heat, selection,
+// hover and the construction scanline. Peak window emission is about 1.5, so bloom takes the windows and not the walls.
+const FACADE_FRAG_EMIT = `
+float ndv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+float fres = pow(1.0 - ndv, 3.0);
+float isRoof = step(3.5, vFaceId);
+vec3 win = mix(fWinCol * 1.5 * fWinArea * fLitA, fWinCol * 1.5 * fMask * fLit, fDetail);
+vec3 sky = mix(vec3(0.02, 0.03, 0.06), vec3(0.16, 0.13, 0.14), fres);
+vec3 emit = win + sky * fres * fMask * (1.0 - fLit) * fDetail * 0.8;
+// Shopfront band: storefront light and small signs.
+float sfE = 1.0 - smoothstep(0.30, 0.34, vY);
+float sfU = fract(vU / 0.5);
+float sfPane = smoothstep(0.06, 0.12, sfU) * (1.0 - smoothstep(0.88, 0.94, sfU));
+float sh = fhash(vec3(floor(vU / 0.5), vSeed * 3.3, 11.0));
+vec3 neon = sh < 0.22 ? vec3(1.0, 0.2, 0.12) : sh < 0.45 ? vec3(0.9, 0.96, 1.0) : vec3(1.0, 0.62, 0.25);
+emit += sfE * neon * (0.5 + 0.6 * sh) * (0.3 + 0.7 * sfPane) * 0.9;
+// Crown and setback edges, and the parapet line.
+float edgeT = (1.0 - smoothstep(0.0, 0.035, vTierTop - vYFrac)) * (1.0 - isRoof);
+emit += vec3(1.0, 0.72, 0.42) * edgeT * (0.25 + 0.5 * fLitA);
+// Tint: a soft coloured glow at the base of the facades.
+emit += uTint * vLang * 0.35 * (1.0 - smoothstep(0.0, 0.18, vY)) * (1.0 - isRoof);
+// Heat: the agent's colour pulses through the windows and the crown.
+float pulse = 0.8 + 0.2 * sin(uTime * 5.0 + vSeed * 6.2831);
+emit += vGlowCol * clamp(vGlow, 0.0, 1.0) * pulse * (0.6 + 1.2 * fLit * fMask * fDetail + 1.4 * edgeT + 0.8 * isRoof);
+float isSel = step(0.75, vSel);
+float hovE = step(0.25, vSel) * (1.0 - step(0.75, vSel));
+emit += vec3(0.8, 0.94, 1.0) * isSel * (0.5 + 2.2 * fres);
+emit += vec3(1.0) * hovE * (0.25 + 1.6 * fres);
+float scanY = fract(uTime * 0.45 + vSeed) * max(vSize.y, 0.2);
+float band = exp(-pow((vY - scanY) / 0.12, 2.0));
+emit += vec3(0.45, 0.82, 1.0) * vShim * (0.15 + 1.8 * band + 0.25 * fres);
+totalEmissiveRadiance = emit;
+`
+
 // ---------- boxes (fallback, the previous look) ----------
 
 const BOX_VARYINGS = `
@@ -198,6 +366,27 @@ const FOG_BUILDINGS = `
 /** Creates the two materials and their shared clock. Call once per canvas. */
 export function createBuildingMaterials(): BuildingMaterials {
   const time = { value: 0 }
+  const tint = { value: 0 }
+  const facade = new MeshStandardMaterial({
+    color: '#ffffff',
+    emissive: '#000000',
+    roughness: 0.62,
+    metalness: 0.05,
+    envMapIntensity: 0.1
+  })
+  facade.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = time
+    shader.uniforms.uTint = tint
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${FACADE_VERT_DECL}`)
+      .replace('#include <begin_vertex>', FACADE_VERT_BODY)
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\n${FACADE_FRAG_DECL}`)
+      .replace('#include <color_fragment>', FACADE_FRAG_COLOR)
+      .replace('#include <emissivemap_fragment>', FACADE_FRAG_EMIT)
+      .replace('#include <fog_fragment>', FOG_BUILDINGS)
+  }
+  facade.customProgramCacheKey = () => 'skyline-facades-v1'
   const models = new MeshStandardMaterial({
     color: '#ffffff',
     emissive: '#000000',
@@ -237,7 +426,7 @@ export function createBuildingMaterials(): BuildingMaterials {
   }
   boxes.customProgramCacheKey = () => 'skyline-buildings-v6'
 
-  return { models, boxes, time }
+  return { models, boxes, facade, time, tint }
 }
 
 /**

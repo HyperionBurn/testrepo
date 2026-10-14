@@ -8,11 +8,12 @@
 //
 // Picking: pickRay answers "which building does this ray hit" through BuildingPicker (picking.ts), so no
 // THREE.Raycaster runs over the instances. Each mesh's raycast() reports only the building it owns.
-import { BoxGeometry, BufferGeometry, Color, InstancedBufferAttribute, InstancedMesh, Vector3, type Intersection, type Ray, type Raycaster, type MeshStandardMaterial } from 'three'
+import { BoxGeometry, BufferAttribute, BufferGeometry, Color, InstancedBufferAttribute, InstancedMesh, Vector3, type Intersection, type Ray, type Raycaster, type MeshStandardMaterial } from 'three'
 import type { CityLayout } from '@shared/types'
-import type { Heat, Mode } from '../state/store'
+import type { BuildingStyle, Heat, Mode } from '../state/store'
 import { visHeight } from './geom'
-import { DEFAULT_LOC, hashPath, planBudget, type Placement, type PickInput } from './modelPicker'
+import { DEFAULT_LOC, hashPath, planBudget, planFacades, type Placement, type PickInput } from './modelPicker'
+import { buildTemplateMesh, templateById } from './facade/templates'
 import { BuildingPicker } from './picking'
 import type { LoadedModel } from './assets/loader'
 import type { BuildingMaterials } from './buildingShader'
@@ -27,7 +28,15 @@ const SPRING_K = 60
 const SPRING_C = 2 * Math.sqrt(SPRING_K) // critical damping
 const SHIMMER_RATE = 1.6
 
+/** 'real' (the default): procedural New York facades. 'stylized': the Kenney models, with the boxes until they load. */
+export type { BuildingStyle }
+
+/** Layers: the boxes and Kenney models of the stylized style, or the facade templates of the real style. */
+type LayerKind = 'boxes' | 'models' | 'facade'
+
 export interface FieldGate {
+  /** Which look to build. Defaults to 'real'. */
+  style?: BuildingStyle;
   mode: Mode;
   gitTs: number | null;
   firstSeen: Record<string, number>;
@@ -69,7 +78,7 @@ interface Batch {
 }
 
 interface Layer {
-  kind: 'boxes' | 'models';
+  kind: LayerKind;
   batches: Batch[];
   /** Slot index to batch index, and to the local instance index inside that batch. */
   slotBatch: Int32Array;
@@ -95,6 +104,7 @@ function smooth01(t: number): number {
 
 export class BuildingField {
   readonly slots: Slot[];
+  readonly style: BuildingStyle;
   /** Called when the set of meshes changes (models adopted, boxes removed). */
   onChange: (() => void) | null = null;
 
@@ -130,6 +140,7 @@ export class BuildingField {
 
   constructor(layout: CityLayout, mats: BuildingMaterials, prev: BuildingField | null, gate: FieldGate) {
     this.mats = mats
+    this.style = gate.style ?? 'real'
     const inputs: PickInput[] = layout.buildings.map((b) => ({
       path: b.path,
       w: b.w,
@@ -137,7 +148,7 @@ export class BuildingField {
       h: visHeight(b, layout),
       loc: gate.loc?.get(b.path) ?? DEFAULT_LOC
     }))
-    const plan = planBudget(inputs)
+    const plan = this.style === 'real' ? planFacades(inputs) : planBudget(inputs)
 
     const nowPaths = new Set<string>()
     const slots: Slot[] = []
@@ -162,8 +173,9 @@ export class BuildingField {
         place: plan[k]!
       })
     })
-    // Files that left the layout keep their footprint and model, and sink into the ground.
-    if (prev) {
+    // Files that left the layout keep their footprint and model, and sink into the ground (not across a style change,
+    // where their model would not exist any more).
+    if (prev && prev.style === this.style) {
       for (const old of prev.slots) {
         if (old.dead || nowPaths.has(old.path)) continue
         slots.push({ ...old, ghost: true, target: 0, shim: 0, writtenH: -1 })
@@ -193,7 +205,10 @@ export class BuildingField {
 
     const ready = gate.models
     const needed = this.modelIds()
-    if (ready && needed.every((id) => ready.has(id))) {
+    if (this.style === 'real') {
+      this.fadeT = 1
+      this.addLayer(this.buildLayer('facade', null))
+    } else if (ready && needed.every((id) => ready.has(id))) {
       this.fadeT = 1
       this.addLayer(this.buildLayer('models', ready))
     } else {
@@ -206,8 +221,9 @@ export class BuildingField {
 
   // ---------- public API ----------
 
+  /** True once the building layer is in: the facades (always, in the real style) or the models (stylized). */
   get hasModels(): boolean {
-    return this.layers.some((L) => L.kind === 'models')
+    return this.layers.some((L) => L.kind !== 'boxes')
   }
 
   /** Every instanced mesh that should be in the scene right now. */
@@ -229,6 +245,7 @@ export class BuildingField {
 
   /** Model ids this field needs (ghosts included). */
   modelIds(): string[] {
+    if (this.style === 'real') return []
     return [...new Set(this.slots.map((s) => s.place.modelId))]
   }
 
@@ -468,7 +485,7 @@ export class BuildingField {
   }
 
   /** Builds a layer: boxes, or one batch per model id. Every slot is in exactly one batch of the layer. */
-  private buildLayer(kind: 'boxes' | 'models', models: ReadonlyMap<string, LoadedModel> | null): Layer {
+  private buildLayer(kind: LayerKind, models: ReadonlyMap<string, LoadedModel> | null): Layer {
     const n = this.slots.length
     const groups = new Map<string, number[]>()
     if (kind === 'boxes') {
@@ -500,6 +517,9 @@ export class BuildingField {
         geometry = new BoxGeometry(1, 1, 1)
         geometry.translate(0, 0.5, 0) // base sits at y = 0
         material = this.mats.boxes
+      } else if (kind === 'facade') {
+        geometry = templateGeometry(id)
+        material = this.mats.facade
       } else {
         const src = models?.get(id)
         if (!src) throw new Error(`model not loaded: ${id}`)
@@ -538,7 +558,7 @@ export class BuildingField {
     L.dirtyColor = true
   }
 
-  private layerOf(kind: 'boxes' | 'models'): Layer | undefined {
+  private layerOf(kind: LayerKind): Layer | undefined {
     return this.layers.find((L) => L.kind === kind)
   }
 
@@ -582,6 +602,7 @@ export class BuildingField {
       const k = L.fade
       const on = hh > 0 && k > 0
       const boxed = L.kind === 'boxes'
+      const facade = L.kind === 'facade'
       const sx = boxed ? s.w : s.place.sx
       const sz = boxed ? s.d : s.place.sz
       const sy = boxed ? hh : hh * s.place.invY
@@ -590,7 +611,8 @@ export class BuildingField {
       m[o + 10] = on ? sz * k : 0
       m[o + 12] = s.x + s.w / 2
       m[o + 14] = s.z + s.d / 2
-      b.aSize.setXYZ(l, s.w, hh, s.d)
+      // Facades take their drawn footprint (the template is centred on it); the rest keep the file's own.
+      b.aSize.setXYZ(l, facade ? sx : s.w, hh, facade ? sz : s.d)
       L.dirtyMatrix = true
     }
     s.writtenH = hh
@@ -660,10 +682,29 @@ export class BuildingField {
   }
 }
 
+/** Facade template geometry, built once per template and shared by every field. */
+const templateSources = new Map<string, BufferGeometry>()
+
+function templateGeometry(id: string): BufferGeometry {
+  let src = templateSources.get(id)
+  if (!src) {
+    const t = templateById(id)
+    if (!t) throw new Error(`no facade template: ${id}`)
+    const m = buildTemplateMesh(t)
+    src = new BufferGeometry()
+    src.setAttribute('position', new BufferAttribute(m.position, 3))
+    src.setAttribute('normal', new BufferAttribute(m.normal, 3))
+    src.setAttribute('aFace', new BufferAttribute(m.aFace, 4))
+    src.setIndex(new BufferAttribute(m.index, 1))
+    templateSources.set(id, src)
+  }
+  return shareGeometry(src)
+}
+
 /** A geometry for one batch that shares the model's vertex buffers (the model stays cached and unchanged). */
 function shareGeometry(src: BufferGeometry): BufferGeometry {
   const g = new BufferGeometry()
-  for (const name of ['position', 'normal', 'uv', 'aWin']) {
+  for (const name of ['position', 'normal', 'uv', 'aWin', 'aFace']) {
     const a = src.getAttribute(name)
     if (a) g.setAttribute(name, a)
   }

@@ -1,21 +1,49 @@
-// Night sky: one dome shader carries the horizon light-pollution band, a Milky Way lane, the moon and the
-// shooting stars. A dense twinkling star field and a slow aurora curtain sit on top of it. Every animation reads
-// the shared clock skyTime (frozen under reduced motion, which also turns the shooting stars off). The reflection
-// environment is generated once from the same gradient, so glass reflects the night.
+// Sky for New York at night. One dome shader carries the gradient (zenith to teal to the orange-pink horizon band,
+// or near-black with a warm light-pollution band at night, or lilac to peach at dawn), thin wisps lit by the last
+// light and a small moon. A sparse star field sits only near the zenith and shooting stars are rare. The time of
+// day is a preset (skyPresets.ts): changes blend over ~2 s, and the blended values are written to shared uniforms
+// (colorU, levelU) that Atmosphere also reads. The scene fog follows the horizon colour so distant geometry melts
+// into the glow. Every animation reads the shared clock skyTime (frozen under reduced motion, which also turns the
+// shooting stars off).
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import {
-  AdditiveBlending, BackSide, BufferAttribute, BufferGeometry, Color, CylinderGeometry, Mesh,
-  MeshBasicMaterial, PMREMGenerator, Scene, ShaderMaterial, SphereGeometry, Vector3
+  AdditiveBlending, BackSide, BufferAttribute, BufferGeometry, Color, DirectionalLight, HemisphereLight, Mesh,
+  MeshBasicMaterial, PMREMGenerator, Scene, ShaderMaterial, SphereGeometry, SRGBColorSpace, Texture, Vector3,
+  WebGLRenderer
 } from 'three'
 import { useSky } from '../state/store'
+import {
+  COLOR_KEYS, LEVEL_KEYS, PresetTransition, type ColorKey, type LevelKey, type ResolvedPreset
+} from './skyPresets'
 
-/** Fog color. The horizon of the sky dome matches it so the city dissolves into the night. */
-export const FOG_HEX = '#0b1430'
+/** Fog colour at blue hour. The live fog follows the horizon of the current preset (see Sky below). */
+export const FOG_HEX = '#3a4c74'
 export const FOG_DENSITY = 0.0042
 
 /** The one clock for every atmosphere shader (Sky, Atmosphere, Backdrop). Sky writes it each frame. */
 export const skyTime = { value: 0 }
+
+const cap = (k: string) => k.charAt(0).toUpperCase() + k.slice(1)
+
+/** Shared colour uniforms, one per preset colour. Sky writes them, Atmosphere and the sky materials read them. */
+export const colorU = Object.fromEntries(COLOR_KEYS.map((k) => [k, { value: new Color() }])) as Record<ColorKey, { value: Color }>
+/** Shared scalar uniforms, one per preset level. */
+export const levelU = Object.fromEntries(LEVEL_KEYS.map((k) => [k, { value: 0 }])) as Record<LevelKey, { value: number }>
+
+/** Every shared uniform under its shader name (uZenith, uStar, ...). Spread these into a ShaderMaterial. */
+export const skyUniforms: Record<string, { value: Color | number }> = {}
+for (const k of COLOR_KEYS) skyUniforms[`u${cap(k)}`] = colorU[k]
+for (const k of LEVEL_KEYS) skyUniforms[`u${cap(k)}`] = levelU[k]
+
+/** Writes a resolved preset into the shared uniforms. */
+function applyResolved(r: ResolvedPreset): void {
+  for (const k of COLOR_KEYS) {
+    const c = r.colors[k]
+    colorU[k].value.setRGB(c[0], c[1], c[2], SRGBColorSpace)
+  }
+  for (const k of LEVEL_KEYS) levelU[k].value = r.levels[k]
+}
 
 /** Shared 3D value noise and fbm for the atmosphere shaders. */
 export const NOISE_GLSL = `
@@ -53,7 +81,7 @@ void main() {
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`
 
-/** Seeded PRNG, so the stars, ridges and far skyline are identical on every launch. */
+/** Seeded PRNG, so the stars and ridges are identical on every launch. */
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0
   return () => {
@@ -67,14 +95,20 @@ export function mulberry32(seed: number): () => number {
 
 /** Moon direction (unit, in the sky dome). Above the horizon, toward the far side of the city. */
 export const MOON_DIR = new Vector3(-0.62, 0.13, -0.78).normalize()
-const MOON_RADIUS = 0.07
+const MOON_RADIUS = 0.035
 
 const SKY_FRAG = `
-uniform vec3 uTop;
+uniform vec3 uZenith;
+uniform vec3 uMid;
+uniform vec3 uTeal;
 uniform vec3 uHorizon;
-uniform vec3 uBottom;
-uniform vec3 uGlowA;
-uniform vec3 uGlowB;
+uniform vec3 uBandA;
+uniform vec3 uBandB;
+uniform vec3 uBelow;
+uniform vec3 uWisp;
+uniform float uBand;
+uniform float uWisps;
+uniform float uMoon;
 uniform vec3 uMoonDir;
 uniform vec3 uMoonCol;
 uniform vec3 uShootA;
@@ -90,39 +124,43 @@ ${NOISE_GLSL}
 void main() {
   vec3 d = normalize(vDir);
   float h = d.y;
-  vec3 col = mix(uHorizon, uTop, smoothstep(0.0, 0.6, h));
-  col = mix(uBottom, col, smoothstep(-0.2, 0.0, h));
 
-  // Light pollution: a broad band hugging the horizon, teal with magenta drifting through it.
+  // Gradient: teal and horizon at the ground, mid blue and zenith overhead.
+  vec3 col = mix(uHorizon, uTeal, smoothstep(0.0, 0.12, h));
+  col = mix(col, uMid, smoothstep(0.08, 0.34, h));
+  col = mix(col, uZenith, smoothstep(0.3, 0.72, h));
+  col = mix(uBelow, col, smoothstep(-0.05, 0.0, h));
+
+  // Horizon band: strong at the line, fading up, drifting between two colours around the compass.
   float az = atan(d.z, d.x);
   float drift = vnoise(vec3(cos(az), sin(az), h * 0.7) * 1.6 + vec3(3.1, 0.0, 0.0));
-  vec3 glow = mix(uGlowA, uGlowB, smoothstep(0.6, 0.9, drift));
-  float band = exp(-max(h, 0.0) * 6.5) * 0.42 + exp(-abs(h) * 40.0) * 0.26;
-  col += glow * band;
+  vec3 band = mix(uBandA, uBandB, smoothstep(0.55, 0.85, drift));
+  float bandAmt = (exp(-max(h, 0.0) * 9.0) * 0.55 + exp(-abs(h) * 45.0) * 0.35) * uBand;
+  col += band * bandAmt;
+
+  // Thin wisps low in the sky, lit by the last light: streaked and sparse (high threshold).
+  float wband = smoothstep(0.015, 0.07, h) * (1.0 - smoothstep(0.16, 0.42, h));
+  vec3 wp = vec3(d.x * 2.2, d.y * 7.0, d.z * 2.2) + vec3(uTime * 0.006, 0.0, uTime * 0.003);
+  float wisp = smoothstep(0.56, 0.9, fbm3(wp));
+  col = mix(col, uWisp, wisp * wband * uWisps * 0.6);
 
   if (uDetail > 0.5) {
-    // Milky Way lane along a tilted great circle.
-    vec3 n = normalize(vec3(0.35, 0.8, 0.45));
-    float lane = dot(d, n);
-    float dust = fbm3(d * 4.0 + vec3(0.0, 2.0, 0.0));
-    col += vec3(0.16, 0.2, 0.34) * exp(-lane * lane * 22.0) * smoothstep(0.25, 0.8, dust) * 0.4;
-
-    // Moon: tight corona, wide faint veil, and a cratered disc with limb darkening.
+    // Small moon: a faint corona and a cratered disc with limb darkening. Fades with the preset.
     float dm = length(d - uMoonDir);
     float r = uMoonSize;
     float dOut = max(dm - r, 0.0);
-    col += uMoonCol * (exp(-dOut * 30.0) * 0.16 + exp(-dOut * 9.0) * 0.03);
-    float disc = 1.0 - smoothstep(r * 0.985, r, dm);
+    col += uMoonCol * (exp(-dOut * 34.0) * 0.12 + exp(-dOut * 10.0) * 0.02) * uMoon;
+    float disc = (1.0 - smoothstep(r * 0.985, r, dm)) * uMoon;
     if (disc > 0.0) {
       float mu = sqrt(max(0.0, 1.0 - (dm * dm) / (r * r)));
       float mare = smoothstep(0.45, 0.72, fbm3(d * 7.0 + 4.0));
-      float craters = smoothstep(0.68, 0.8, vnoise(d * 46.0)) * 0.6 + smoothstep(0.7, 0.85, vnoise(d * 15.0)) * 0.35;
+      float craters = smoothstep(0.68, 0.8, vnoise(d * 46.0)) * 0.6;
       float surf = 0.94 - 0.22 * mare - 0.1 * craters;
       vec3 moon = uMoonCol * surf * (0.45 + 0.55 * mu) * 0.8;
       col = mix(col, moon, disc);
     }
 
-    // One shooting star at a time: a thin head with a fading tail along the arc from A to B.
+    // One shooting star at a time (they are rare): a thin head with a fading tail along the arc from A to B.
     float life = (uTime - uShootT0) / uShootLen;
     if (uShootOn > 0.5 && life > 0.0 && life < 1.0) {
       float head = life * 1.15;
@@ -139,15 +177,11 @@ void main() {
   gl_FragColor = vec4(col, 1.0);
 }`
 
-/** The night dome. detail = false is the reflection environment (no moon, shooting stars or Milky Way). */
+/** The sky dome. detail = false is the reflection environment (no moon or shooting stars). */
 export function makeSkyMaterial(detail = true): ShaderMaterial {
   return new ShaderMaterial({
     uniforms: {
-      uTop: { value: new Color('#02040b') },
-      uHorizon: { value: new Color('#1a2a52') },
-      uBottom: { value: new Color('#0b1430') },
-      uGlowA: { value: new Color('#19c6d9') },
-      uGlowB: { value: new Color('#c64fae') },
+      ...skyUniforms,
       uMoonDir: { value: MOON_DIR.clone() },
       uMoonCol: { value: new Color('#cfdcf5') },
       uMoonSize: { value: MOON_RADIUS },
@@ -174,12 +208,14 @@ attribute float aRate;
 attribute vec3 aColor;
 uniform float uTime;
 uniform float uPixelRatio;
+uniform float uStar;
 varying vec3 vColor;
 varying float vA;
 void main() {
   float tw = 0.7 + 0.3 * sin(uTime * aRate + aPhase);
   vec3 dir = normalize(position);
-  vA = tw * smoothstep(-0.03, 0.12, dir.y);
+  // Stars show only high in the sky: the zenith, not the whole dome.
+  vA = tw * smoothstep(0.45, 0.8, dir.y) * uStar;
   vColor = aColor;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -195,10 +231,10 @@ void main() {
   gl_FragColor = vec4(vColor, g * vA);
 }`
 
-/** A few thousand stars on a shell inside the dome. Sizes, tints and twinkle phases are seeded. */
+/** A sparse set of small stars on a shell inside the dome. Sizes, tints and twinkle phases are seeded. */
 function makeStarField(): BufferGeometry {
   const rnd = mulberry32(7)
-  const n = 4200
+  const n = 320
   const pos = new Float32Array(n * 3)
   const size = new Float32Array(n)
   const phase = new Float32Array(n)
@@ -213,11 +249,11 @@ function makeStarField(): BufferGeometry {
     pos[i * 3 + 1] = u * R
     pos[i * 3 + 2] = s * Math.sin(t) * R
     const k = rnd()
-    size[i] = k < 0.9 ? 1 + rnd() * 0.7 : k < 0.99 ? 1.9 + rnd() * 0.9 : 3 + rnd() * 1.4
+    size[i] = k < 0.92 ? 0.9 + rnd() * 0.6 : 1.6 + rnd() * 0.8
     phase[i] = rnd() * Math.PI * 2
     rate[i] = 0.5 + rnd() * 1.8
     const tint = rnd()
-    const b = 0.3 + 0.7 * rnd() * rnd()
+    const b = 0.3 + 0.6 * rnd() * rnd()
     // Mostly white, some blue-white, a few warm.
     const r = tint < 0.7 ? 0.92 : tint < 0.9 ? 0.6 : 1.0
     const g = tint < 0.7 ? 0.95 : tint < 0.9 ? 0.76 : 0.85
@@ -235,37 +271,34 @@ function makeStarField(): BufferGeometry {
   return geo
 }
 
-const AURORA_FRAG = `
-uniform float uTime;
-varying vec3 vDir;
-${NOISE_GLSL}
-void main() {
-  vec3 d = normalize(vDir);
-  float h = d.y;
-  float band = smoothstep(0.02, 0.2, h) * (1.0 - smoothstep(0.45, 0.8, h));
-  float az = atan(d.z, d.x);
-  float t = uTime * 0.035;
-  // Curtains: noise stretched vertically on a seamless ring, drifting sideways.
-  vec3 q = vec3(cos(az) * 1.8, sin(az) * 1.8, h * 2.2 - t * 1.5) + vec3(t, 0.0, 0.0);
-  float n = fbm3(q);
-  float curtain = smoothstep(0.42, 0.8, n);
-  // Fine vertical rays inside each curtain.
-  float rays = 0.55 + 0.45 * sin(az * 60.0 + fbm3(q * vec3(1.0, 0.4, 1.0) * 2.0) * 9.0 + t * 4.0);
-  float a = band * curtain * rays;
-  vec3 col = mix(vec3(0.12, 0.95, 0.8), vec3(0.55, 0.3, 1.0), smoothstep(0.2, 0.55, h + 0.1 * n));
-  gl_FragColor = vec4(col * a * 0.42, 1.0);
-}`
-
-function makeAuroraMaterial(): ShaderMaterial {
-  return new ShaderMaterial({
-    uniforms: { uTime: skyTime },
-    vertexShader: DOME_VERT,
-    fragmentShader: AURORA_FRAG,
-    side: BackSide,
-    transparent: true,
-    depthWrite: false,
-    blending: AdditiveBlending
-  })
+/**
+ * The reflection environment: the sky gradient (no moon) and three soft boxes for glass. Built from the current
+ * shared uniforms, so it is rebuilt once a time-of-day change has settled.
+ */
+function buildEnvironment(gl: WebGLRenderer): Texture {
+  const pmrem = new PMREMGenerator(gl)
+  const env = new Scene()
+  const sphere = new Mesh(new SphereGeometry(50, 32, 16), makeSkyMaterial(false))
+  env.add(sphere)
+  const dim = levelU.keyI.value
+  const box = (color: string, intensity: number, pos: [number, number, number], w: number, h: number) => {
+    const m = new Mesh(
+      new SphereGeometry(1, 8, 8),
+      new MeshBasicMaterial({ color: new Color(color).multiplyScalar(intensity * dim) })
+    )
+    m.scale.set(w, h, 1)
+    m.position.set(...pos)
+    m.lookAt(new Vector3(0, 0, 0))
+    env.add(m)
+  }
+  box('#8fb4ff', 2.2, [30, 22, 25], 6, 3)
+  box('#ff9a4a', 1.6, [-35, 14, -30], 5, 2.5)
+  box('#7fb8d8', 1.2, [0, 40, -10], 7, 2)
+  const tex = pmrem.fromScene(env, 0.02).texture
+  pmrem.dispose()
+  sphere.geometry.dispose()
+  ;(sphere.material as ShaderMaterial).dispose()
+  return tex
 }
 
 // Scratch vectors for scheduling shooting stars (no per-frame allocation).
@@ -278,60 +311,82 @@ export function Sky() {
   const sky = useMemo(() => makeSkyMaterial(true), [])
   const stars = useMemo(() => makeStarField(), [])
   const starMat = useMemo(() => new ShaderMaterial({
-    uniforms: { uTime: skyTime, uPixelRatio: { value: 1 } },
+    uniforms: { uTime: skyTime, uPixelRatio: { value: 1 }, uStar: levelU.star },
     vertexShader: STAR_VERT,
     fragmentShader: STAR_FRAG,
     transparent: true,
     depthWrite: false,
     blending: AdditiveBlending
   }), [])
-  const aurora = useMemo(() => makeAuroraMaterial(), [])
-  const auroraGeo = useMemo(() => new CylinderGeometry(560, 560, 1000, 128, 1, true), [])
-  const nextShot = useRef(3 + Math.random() * 4)
+  const transition = useMemo(() => new PresetTransition(useSky.getState().timeOfDay), [])
+  const hemi = useRef<HemisphereLight>(null)
+  const key = useRef<DirectionalLight>(null)
+  const rim = useRef<DirectionalLight>(null)
+  const envFor = useRef<string | null>(null)
+  const envTex = useRef<Texture | null>(null)
+  const nextShot = useRef(20 + Math.random() * 40)
 
-  // Reflection environment, rendered once from the sky gradient and a few procedural softboxes.
+  // Starts from the current preset: write the uniforms, then build the reflections once.
   useEffect(() => {
-    const pmrem = new PMREMGenerator(gl)
-    const env = new Scene()
-    env.add(new Mesh(new SphereGeometry(50, 32, 16), makeSkyMaterial(false)))
-    const box = (color: string, intensity: number, pos: [number, number, number], w: number, h: number) => {
-      const m = new Mesh(
-        new SphereGeometry(1, 8, 8),
-        new MeshBasicMaterial({ color: new Color(color).multiplyScalar(intensity) })
-      )
-      m.scale.set(w, h, 1)
-      m.position.set(...pos)
-      m.lookAt(new Vector3(0, 0, 0))
-      env.add(m)
-    }
-    box('#8fb4ff', 2.2, [30, 22, 25], 6, 3)
-    box('#ff7ad9', 1.6, [-35, 14, -30], 5, 2.5)
-    box('#22d3ee', 1.2, [0, 40, -10], 7, 2)
-    const tex = pmrem.fromScene(env, 0.02).texture
-    scene.environment = tex
-    pmrem.dispose()
+    applyResolved(transition.current)
+    envTex.current = buildEnvironment(gl)
+    scene.environment = envTex.current
+    envFor.current = transition.target
     return () => {
-      if (scene.environment === tex) scene.environment = null
-      tex.dispose()
+      if (scene.environment === envTex.current) scene.environment = null
+      envTex.current?.dispose()
+      envTex.current = null
     }
-  }, [gl, scene])
+  }, [gl, scene, transition])
 
   useEffect(() => () => {
     sky.dispose()
     starMat.dispose()
-    aurora.dispose()
     stars.dispose()
-    auroraGeo.dispose()
-  }, [sky, starMat, aurora, stars, auroraGeo])
+  }, [sky, starMat, stars])
 
-  // Runs before the other atmosphere layers so they read this frame's clock.
-  useFrame(({ clock, gl: renderer }) => {
-    const reduced = useSky.getState().reducedMotion
+  // Runs before the other atmosphere layers so they read this frame's clock and colours.
+  useFrame(({ clock, gl: renderer, scene: s }, dt) => {
+    const st = useSky.getState()
+    const reduced = st.reducedMotion
     const t = reduced ? 0 : clock.elapsedTime
     skyTime.value = t
     starMat.uniforms.uPixelRatio!.value = renderer.getPixelRatio()
+
+    // Time of day: a change blends over ~2 s (at once under reduced motion).
+    transition.setTarget(st.timeOfDay, !reduced)
+    const moving = transition.step(dt)
+    applyResolved(transition.current)
+
+    // The fog takes the horizon colour, so distant buildings melt into the glow of the current preset.
+    const fog = s.fog as { color: Color } | null
+    fog?.color.copy(colorU.fog.value)
+
+    // Scene light follows the preset.
+    if (hemi.current) {
+      hemi.current.color.copy(colorU.hemiSky.value)
+      hemi.current.groundColor.copy(colorU.hemiGround.value)
+      hemi.current.intensity = levelU.hemi.value
+    }
+    if (key.current) {
+      key.current.color.copy(colorU.key.value)
+      key.current.intensity = levelU.keyI.value
+    }
+    if (rim.current) {
+      rim.current.color.copy(colorU.bandB.value)
+      rim.current.intensity = levelU.keyI.value * 0.5
+    }
+
+    // Reflections are rebuilt once the change has settled.
+    if (!moving && envFor.current !== transition.target) {
+      envTex.current?.dispose()
+      envTex.current = buildEnvironment(gl)
+      s.environment = envTex.current
+      envFor.current = transition.target
+    }
+
     if (reduced || t < nextShot.current) return
-    // One shooting star: a short streak across the upper sky, then 8 to 15 seconds of quiet.
+    // One shooting star: a short streak across the upper sky, then 45 to 120 seconds of quiet (they are rare).
     const az = Math.random() * Math.PI * 2
     shotA.set(Math.cos(az), 0.35 + Math.random() * 0.45, Math.sin(az)).normalize()
     shotB.set(
@@ -343,7 +398,7 @@ export function Sky() {
     sky.uniforms.uShootB!.value.copy(shotB)
     sky.uniforms.uShootT0!.value = t
     sky.uniforms.uShootOn!.value = 1
-    nextShot.current = t + 8 + Math.random() * 7
+    nextShot.current = t + 45 + Math.random() * 75
   }, -1)
 
   return (
@@ -352,10 +407,9 @@ export function Sky() {
         <sphereGeometry args={[1, 48, 24]} />
       </mesh>
       <points geometry={stars} material={starMat} frustumCulled={false} renderOrder={-9} />
-      <mesh geometry={auroraGeo} material={aurora} frustumCulled={false} renderOrder={-8} />
-      <hemisphereLight args={['#5b7cff', '#03040a', 0.45]} />
-      <directionalLight position={[-60, 120, 50]} intensity={1.0} color="#cfe0ff" />
-      <directionalLight position={[80, 40, -60]} intensity={0.5} color="#ff7ad9" />
+      <hemisphereLight ref={hemi} args={['#5b7cff', '#03040a', 0.45]} />
+      <directionalLight ref={key} position={[-60, 120, 50]} intensity={1.0} color="#cfe0ff" />
+      <directionalLight ref={rim} position={[80, 40, -60]} intensity={0.5} color="#ff7ad9" />
     </>
   )
 }

@@ -10,6 +10,7 @@ import { Overlay } from './Overlay'
 import { IconArrowRight, IconClock, IconDoc, IconFolder, IconLink, IconSend, IconSparkle, IconVideo, IconWave, IconReplay } from './icons'
 
 const COLOR_ACTION_META: Record<ColorMode, { sub: string; icon: ReactNode }> = {
+  natural: { sub: 'Neutral facades, lit by the city', icon: <IconSparkle size={13} /> },
   area: { sub: 'One hue per neighborhood', icon: <IconFolder size={13} /> },
   language: { sub: 'Color by file type', icon: <IconDoc size={13} /> },
   churn: { sub: 'Most-committed files glow hot', icon: <IconSparkle size={13} /> },
@@ -48,8 +49,21 @@ function colorItems(current: ColorMode): Item[] {
 }
 
 function actionItems(q: string, color: ColorMode): Item[] {
+  const real = useSky.getState().buildingStyle === 'real'
   const all: Item[] = [
     ...colorItems(color),
+    {
+      key: 'a-building-style',
+      group: 'Actions',
+      label: real ? 'Use stylized (Kenney) buildings' : 'Use real facades',
+      sub: real ? 'Toy models from the Kenney kit' : 'Procedural New York facades',
+      icon: <IconFolder size={13} />,
+      hint: 'B',
+      run: () => {
+        close()
+        useSky.getState().toggleBuildingStyle()
+      }
+    },
     {
       key: 'a-dispatch',
       group: 'Actions',

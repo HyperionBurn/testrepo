@@ -5,6 +5,8 @@ import { BuildingField, COLOR_FADE_S, CROSSFADE_S } from './BuildingField'
 import type { BuildingMaterials } from './buildingShader'
 import type { LoadedModel } from './assets/loader'
 import { getModel } from './assets/manifest'
+import { templateById } from './facade/templates'
+import { visHeight } from './geom'
 
 const layout: CityLayout = {
   buildings: [
@@ -14,10 +16,18 @@ const layout: CityLayout = {
   districts: [],
   size: 120
 }
-const gate = { mode: 'live' as const, gitTs: null, firstSeen: {} }
+/** The stylized gate: the Kenney model tests below exercise that path. The real style has its own block at the end. */
+const gate = { style: 'stylized' as const, mode: 'live' as const, gitTs: null, firstSeen: {} }
+const realGate = { mode: 'live' as const, gitTs: null, firstSeen: {} }
 
 function mats(): BuildingMaterials {
-  return { models: new MeshStandardMaterial(), boxes: new MeshStandardMaterial(), time: { value: 0 } }
+  return {
+    models: new MeshStandardMaterial(),
+    boxes: new MeshStandardMaterial(),
+    facade: new MeshStandardMaterial(),
+    time: { value: 0 },
+    tint: { value: 0 }
+  }
 }
 
 /** A stand-in for a loaded model: a unit box in the model's own size, no textures. */
@@ -136,3 +146,53 @@ describe('BuildingField picking', () => {
     expect(paths.filter((p) => p === 'b.ts').length).toBe(1)
   })
 })
+
+/** The app steps at most 50 ms at a time (Buildings.tsx); the springs need small steps to settle. */
+function settle(f: BuildingField): void {
+  for (let i = 0; i < 400; i++) f.step(0.02)
+}
+
+describe('BuildingField real style (facades)', () => {
+  it('is the default, with a facade layer and no model loading', () => {
+    const f = new BuildingField(layout, mats(), null, realGate)
+    expect(f.style).toBe('real')
+    expect(f.hasModels).toBe(true)
+    expect(f.modelIds()).toEqual([])
+    const id = f.placementOf('a.ts')!.modelId
+    expect(templateById(id)).toBeDefined()
+    // One mesh per template in use, each with the facade attributes the shader reads.
+    for (const m of f.meshes) expect(m.geometry.getAttribute('aFace')).toBeDefined()
+  })
+
+  it('draws each facade at its footprint times FILL, with the rendered height as its y scale', () => {
+    const f = new BuildingField(layout, mats(), null, realGate)
+    settle(f)
+    const slot = f.slotFor('a.ts')!
+    const p = f.placementOf('a.ts')!
+    expect(p.sx).toBeCloseTo(slot.w * 0.97, 9)
+    expect(p.sz).toBeCloseTo(slot.d * 0.97, 9)
+    expect(p.invY).toBe(1)
+    expect(slot.h).toBeCloseTo(visHeight(layout.buildings[0]!, layout), 6)
+  })
+
+  it('the picked top of a facade is its rendered height (visHeight)', () => {
+    const f = new BuildingField(layout, mats(), null, realGate)
+    settle(f)
+    const slot = f.slotFor('a.ts')!
+    const hit = f.pickRay(new Ray(new Vector3(1, 200, 1), new Vector3(0, -1, 0)))
+    expect(hit).not.toBeNull()
+    expect(f.slots[hit!.slot]!.path).toBe('a.ts')
+    expect(hit!.point.y).toBeCloseTo(slot.h, 3)
+    expect(f.pickRay(new Ray(new Vector3(3, 200, 1), new Vector3(0, -1, 0)))).toBeNull()
+  })
+
+  it('a style change does not carry ghosts across (their models would not exist)', () => {
+    const before = new BuildingField(layout, mats(), null, realGate)
+    const gone: CityLayout = { ...layout, buildings: [layout.buildings[0]!] }
+    const removed = new BuildingField(gone, mats(), before, realGate)
+    expect(removed.slots.some((s) => s.ghost)).toBe(true)
+    const restyled = new BuildingField(layout, mats(), removed, { ...realGate, style: 'stylized' })
+    expect(restyled.slots.some((s) => s.ghost)).toBe(false)
+  })
+})
+

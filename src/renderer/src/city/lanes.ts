@@ -350,7 +350,7 @@ export function stepVehicle(v: VehicleState, dt: number, net: Network, rng: Rng,
 }
 
 /** Picks the segment to leave `node`, having arrived on segment `s` travelling in direction `d`. Allocation-free. */
-function chooseTurn(net: Network, s: number, d: number, node: number, rng: Rng): number {
+export function chooseTurn(net: Network, s: number, d: number, node: number, rng: Rng): number {
   const seg = net.segments[s]!
   const tx = d * seg.ux
   const tz = d * seg.uz
@@ -403,3 +403,211 @@ export function lanePoint(
   out[o + 1] = y
   out[o + 2] = start.z + tz * t + tx * LANE_OFFSET
 }
+
+// ---------------------------------------------------------------------------------------------
+// Signals. Every junction (three or more segments) runs a fixed cycle: north-south green, amber, east-west
+// green, amber. Each junction has its own offset, so the city does not blink in unison.
+
+export const PHASE_GREEN = 0
+export const PHASE_AMBER = 1
+export const PHASE_RED = 2
+export type Phase = typeof PHASE_GREEN | typeof PHASE_AMBER | typeof PHASE_RED
+
+/** Seconds per full cycle: 9 green + 2 amber for each axis. */
+export const SIGNAL_CYCLE = 22
+const NS_GREEN = 9
+const AMBER = 2
+
+/** The offset of a junction in the cycle: a fixed hash of its node id. */
+export function signalOffset(node: number): number {
+  const h = Math.imul(node + 1, 0x9e3779b1) >>> 0
+  return ((h % 1000) / 1000) * SIGNAL_CYCLE
+}
+
+/** The phase an approach sees at `clock`. `horizontal` is east-west traffic (a horizontal segment). */
+export function signalPhase(clock: number, offset: number, horizontal: boolean): Phase {
+  let local = (clock + offset) % SIGNAL_CYCLE
+  if (local < 0) local += SIGNAL_CYCLE
+  if (!horizontal) {
+    if (local < NS_GREEN) return PHASE_GREEN
+    if (local < NS_GREEN + AMBER) return PHASE_AMBER
+    return PHASE_RED
+  }
+  if (local < NS_GREEN + AMBER) return PHASE_RED
+  if (local < 2 * NS_GREEN + AMBER) return PHASE_GREEN
+  return PHASE_AMBER
+}
+
+/** A junction is a node where three or more segments meet. Corners and dead ends have no signal. */
+export function isSignalNode(net: Network, node: number): boolean {
+  return (net.nodes[node]?.segments.length ?? 0) >= 3
+}
+
+// ---------------------------------------------------------------------------------------------
+// Traffic with car-following, stop lines and signals.
+
+/** Car length and the gap kept to the car in front, in world units. */
+export const CAR_LENGTH = 0.5
+export const MIN_GAP = 0.35
+/** Speed change limits, units/s: acceleration, comfortable braking used by the stopping curve, hard braking. */
+const ACCEL = 1.8
+const BRAKE = 3.2
+const HARD_BRAKE = 6
+/** Vehicles stop this far before the junction when they must not enter it. */
+const STOP_LINE = 0.1
+/** Within this distance of a junction a vehicle picks its exit and checks the signal. */
+const APPROACH = 3
+/** Sub-step of the simulation: small enough that a car never covers a whole gap in one step. */
+const SUB = 1 / 20
+/** Room needed in front of a lane entry: a car plus the gap plus one sub-step of travel. */
+const ENTRY_CLEAR = CAR_LENGTH + MIN_GAP + 0.4
+
+/** Vehicles for a network: about 0.8 per unit of lane (both directions), capped. Scales with the city. */
+export const MAX_VEHICLES = 1200
+export function vehicleBudget(totalLength: number): number {
+  if (!(totalLength > 0)) return 0
+  return Math.min(MAX_VEHICLES, Math.floor(totalLength * 0.8))
+}
+
+/** Mutable state the stepper needs beyond the vehicles: the clock, the exits and per-frame scratch. */
+export interface TrafficContext {
+  /** Simulation clock in seconds. Advanced by stepTraffic; drives the signals. */
+  clock: number
+  /** Per-segment speed multiplier (1 = free flow), e.g. near edit sites. */
+  drag?: Float32Array
+  /** Chosen exit segment at the node ahead, per vehicle (-1 = not chosen yet). Length = vehicle count. */
+  pending: Int32Array
+  order?: Int32Array
+  leader?: Int32Array
+  rear?: Float64Array
+  start?: Float32Array
+}
+
+function laneKey(seg: number, dir: number): number {
+  return seg * 2 + (dir > 0 ? 1 : 0)
+}
+
+/**
+ * Advances every vehicle by dt seconds with car-following. Vehicles keep their lane (each direction on its own
+ * side), queue behind the car ahead and behind red signals, and never enter a lane whose entry is occupied. The
+ * result is deterministic for a seed and a sequence of dt values.
+ */
+export function stepTraffic(v: VehicleState, dt: number, net: Network, rng: Rng, ctx: TrafficContext): void {
+  const n = v.count
+  if (n === 0 || net.segments.length === 0) {
+    ctx.clock += Math.max(0, dt)
+    return
+  }
+  const laneCount = net.segments.length * 2
+  if (!ctx.order || ctx.order.length !== n) ctx.order = new Int32Array(n)
+  if (!ctx.leader || ctx.leader.length !== n) ctx.leader = new Int32Array(n)
+  if (!ctx.start || ctx.start.length !== n) ctx.start = new Float32Array(n)
+  if (!ctx.rear || ctx.rear.length !== laneCount) ctx.rear = new Float64Array(laneCount)
+  let left = Math.max(0, dt)
+  while (left > 1e-9) {
+    const h = Math.min(SUB, left)
+    left -= h
+    ctx.clock += h
+    substep(v, h, net, rng, ctx as Required<TrafficContext>)
+  }
+}
+
+function substep(v: VehicleState, h: number, net: Network, rng: Rng, ctx: Required<TrafficContext>): void {
+  const n = v.count
+  const segs = net.segments
+  const { order, leader, rear, start } = ctx
+  const laneOf = (i: number) => v.seg[i]! * 2 + (v.dir[i]! > 0 ? 1 : 0)
+
+  // Lanes ordered front to back: by lane, then by distance travelled (furthest first).
+  for (let i = 0; i < n; i++) {
+    order[i] = i
+    start[i] = v.t[i]!
+  }
+  order.sort((a, b) => laneOf(a) - laneOf(b) || v.t[b]! - v.t[a]!)
+  rear.fill(Infinity)
+  let prevKey = -1
+  let prev = -1
+  for (let k = 0; k < n; k++) {
+    const i = order[k]!
+    const key = laneOf(i)
+    leader[i] = key === prevKey ? prev : -1
+    prevKey = key
+    prev = i
+    if (v.t[i]! < rear[key]!) rear[key] = v.t[i]!
+  }
+
+  for (let k = 0; k < n; k++) {
+    const i = order[k]!
+    const lead = leader[i]!
+    let s = v.seg[i]!
+    let d = v.dir[i]!
+    let t = v.t[i]!
+    let sp = v.speed[i]!
+    const cruise = v.cruise[i]! * (ctx.drag ? ctx.drag[s]! : 1)
+    const limitAt = (seg: number, dir: number, at: number, guard: number): number => {
+      const sg = segs[seg]!
+      const node = dir > 0 ? sg.b : sg.a
+      if (sg.length - at < APPROACH && ctx.pending[i]! < 0) {
+        const route = v.routes[i]
+        let nx = -1
+        if (route) {
+          nx = route[node]!
+          if (nx < 0) v.routes[i] = null
+        }
+        ctx.pending[i] = nx >= 0 ? nx : chooseTurn(net, seg, dir, node, rng)
+      }
+      // Free road: the segment end is the limit, and the car crosses into the exit there.
+      let limit = sg.length
+      if (guard === 0 && lead >= 0) limit = Math.min(limit, start[lead]! - CAR_LENGTH - MIN_GAP)
+      const nx = ctx.pending[i]!
+      if (nx >= 0) {
+        const stopForSignal = (net.nodes[node]?.segments.length ?? 0) >= 3
+          && signalPhase(ctx.clock, signalOffset(node), sg.horizontal) === PHASE_RED
+        const nd = nx === seg ? -dir : segs[nx]!.a === node ? 1 : -1
+        const blockedEntry = rear[laneKey(nx, nd)]! < ENTRY_CLEAR
+        if (stopForSignal || blockedEntry) limit = Math.min(limit, sg.length - STOP_LINE)
+      }
+      return limit
+    }
+
+    // Speed for this sub-step: the cruise speed, capped by a braking curve towards the limit.
+    let limit = limitAt(s, d, t, 0)
+    let target = cruise
+    if (limit < segs[s]!.length) target = Math.min(target, Math.sqrt(2 * BRAKE * Math.max(0, limit - t)))
+    if (target > sp) sp = Math.min(target, sp + ACCEL * h)
+    else sp = Math.max(target, sp - HARD_BRAKE * h)
+
+    let budget = sp * h
+    for (let guard = 0; guard < 4; guard++) {
+      const L = segs[s]!.length
+      limit = guard === 0 ? limit : limitAt(s, d, t, guard)
+      if (t + budget <= limit) {
+        t += budget
+        break
+      }
+      if (limit < L) {
+        // Held by the car ahead, or stopped at a red signal or a full lane: stop at the limit. A car that found
+        // itself inside that gap (a random spawn) is moved back to it, so overlaps clear within one step.
+        t = Math.max(0, limit)
+        sp = 0
+        budget = 0
+        break
+      }
+      // Cross the junction onto the chosen exit.
+      budget -= L - t
+      const exit = ctx.pending[i]!
+      ctx.pending[i] = -1
+      const node = d > 0 ? segs[s]!.b : segs[s]!.a
+      d = exit === s ? -d : segs[exit]!.a === node ? 1 : -1 // a dead end (exit === s) turns back
+      s = exit
+      t = 0
+      rear[laneKey(s, d)] = 0
+      if (budget <= 0) break
+    }
+    v.seg[i] = s
+    v.dir[i] = d
+    v.t[i] = t
+    v.speed[i] = sp
+  }
+}
+

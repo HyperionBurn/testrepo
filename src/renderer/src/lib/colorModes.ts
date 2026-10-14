@@ -1,4 +1,5 @@
 // Color modes for the city's buildings. Pure: no three.js, no DOM.
+//   natural   the default: facades keep their neutral palette, no tint at all (the colour comes from the light)
 //   area      one hue per neighborhood (see neighborhoodIndex in shared/layout.ts); root files stay silver
 //   language  the extension palette from shared/lang.ts
 //   churn     commit count, cool to hot (indigo, cyan, amber, magenta) by percentile
@@ -9,10 +10,11 @@ import { LANG_COLORS, LANG_LABEL } from '../../../shared/lang'
 import { hexToRgb } from '../../../shared/color'
 import type { NeighborhoodIndex } from '../../../shared/layout'
 
-export const COLOR_MODES = ['area', 'language', 'churn', 'age'] as const
+export const COLOR_MODES = ['natural', 'area', 'language', 'churn', 'age'] as const
 export type ColorMode = (typeof COLOR_MODES)[number]
-export const DEFAULT_COLOR_MODE: ColorMode = 'area'
+export const DEFAULT_COLOR_MODE: ColorMode = 'natural'
 export const COLOR_MODE_LABEL: Readonly<Record<ColorMode, string>> = {
+  natural: 'Natural',
   area: 'Area',
   language: 'Language',
   churn: 'Churn',
@@ -28,6 +30,8 @@ export const AREA_PALETTE: readonly string[] = [
   '#F3923F', '#52F4CC', '#F452ED', '#ADE935', '#528FF4'
 ]
 export const ROOT_SILVER = '#C4CDD9'
+/** The natural mode's building color: white, so a shader tint multiplied in would still be neutral. */
+export const NATURAL_NEUTRAL = '#FFFFFF'
 
 type Stop = readonly [position: number, color: string];
 const CHURN_RAMP: readonly Stop[] = [
@@ -201,6 +205,13 @@ function rampPlan(
   }
 }
 
+/** No tint: every building is neutral, and the legend is empty (the natural look has nothing to explain). */
+function naturalPlan(buildings: readonly CityBuilding[], areaColors: Map<string, string>): ColorPlan {
+  const colors = new Map<string, string>()
+  for (const b of buildings) colors.set(b.path, NATURAL_NEUTRAL)
+  return { mode: 'natural', colors, areaColors, legend: [], ramp: null, note: null }
+}
+
 /** Colors and legend for one mode. `buildings` and `files` describe the same repo; `hoods` covers the buildings. */
 export function buildColorPlan(
   mode: ColorMode,
@@ -209,6 +220,7 @@ export function buildColorPlan(
   hoods: NeighborhoodIndex
 ): ColorPlan {
   const area = areaPlan(buildings, hoods)
+  if (mode === 'natural') return naturalPlan(buildings, area.areaColors)
   if (mode === 'area') return area
   if (mode === 'language') return languagePlan(buildings, area.areaColors)
 

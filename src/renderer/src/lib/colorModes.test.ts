@@ -6,6 +6,7 @@ import {
   AREA_PALETTE,
   buildColorPlan,
   COLOR_MODES,
+  DEFAULT_COLOR_MODE,
   isColorMode,
   nextColorMode,
   percentileRanks,
@@ -53,15 +54,25 @@ describe('percentileRanks', () => {
 })
 
 describe('mode helpers', () => {
-  it('cycles through every mode and back', () => {
-    let m: ColorMode = 'area'
+  it('cycles through every mode and back, natural first', () => {
+    let m: ColorMode = DEFAULT_COLOR_MODE
     const seen: ColorMode[] = []
     for (let i = 0; i < COLOR_MODES.length; i++) {
       seen.push(m)
       m = nextColorMode(m)
     }
-    expect(seen).toEqual(['area', 'language', 'churn', 'age'])
-    expect(m).toBe('area')
+    expect(seen).toEqual(['natural', 'area', 'language', 'churn', 'age'])
+    expect(m).toBe('natural')
+  })
+
+  it('defaults to natural, and natural tints nothing', () => {
+    expect(DEFAULT_COLOR_MODE).toBe('natural')
+    expect(isColorMode('natural')).toBe(true)
+    const { plan } = setup(TREE, 'natural')
+    expect(plan.mode).toBe('natural')
+    expect(plan.legend).toEqual([])
+    expect(plan.ramp).toBeNull()
+    for (const c of plan.colors.values()) expect(c).toBe('#FFFFFF')
   })
 
   it('accepts only known modes', () => {

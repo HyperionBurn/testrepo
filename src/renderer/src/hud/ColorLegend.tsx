@@ -62,6 +62,7 @@ export function ColorLegend() {
           <span>{ends[1]}</span>
         </div>
       )}
+      {mode === 'natural' && <div className="legend__note">Tint by… (area, language, churn, age)</div>}
       {plan.note && <div className="legend__note">{plan.note}</div>}
       {entries.length > 0 && (
         <ul className="legend__list">
