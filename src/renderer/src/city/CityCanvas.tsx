@@ -7,15 +7,21 @@ import type { CityDistrict } from '@shared/types'
 import { useSky } from '../state/store'
 import { notePointerDown } from './registry'
 import { Sky, FOG_HEX, FOG_DENSITY } from './Sky'
+import { Atmosphere } from './Atmosphere'
+import { Backdrop } from './Backdrop'
 import { Ground, Districts } from './Ground'
 import { Buildings } from './Buildings'
+import { Roads } from './Roads'
 import { Scaffolding, Spotlight, ImportArcs } from './Overlays'
 import { Drones } from './Drones'
+import { FxStage } from './FxStage'
+import { Traffic } from './Traffic'
 import { CameraRig } from './CameraRig'
 import { Effects } from './Effects'
 import { serviceGrab } from './capture'
 // Registers window.__skylineDemo (demo repo and fake agents) for screenshots and manual testing.
 import './dev/fixture'
+import './assets/debug'
 
 const NO_DISTRICTS: CityDistrict[] = []
 
@@ -90,13 +96,18 @@ export default function CityCanvas() {
           }}
         />
         <Sky />
+        <Backdrop />
+        <Atmosphere />
         <Ground />
         <CityDistricts />
+        <Roads />
         <Buildings />
         <Scaffolding />
         <Spotlight />
         <ImportArcs />
         <Drones />
+        <FxStage />
+        <Traffic />
         <CameraRig />
         <CaptureTap composed={composed} />
         {composed && <Effects />}

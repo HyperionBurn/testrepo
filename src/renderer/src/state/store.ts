@@ -62,6 +62,8 @@ interface SkyState {
   colorMode: ColorMode;                                  // what the buildings are colored by (persisted)
   hoods: NeighborhoodIndex | null;                       // neighborhoods of the current layout (derived in setRepo)
   colorPlan: ColorPlan | null;                           // building colors and legend for colorMode (derived in setRepo / setColorMode)
+  director: boolean;                                     // director camera (V): cuts between shots while the user is hands-off; never on with reduced motion
+  setDirector(on: boolean): void; toggleDirector(): void;
   setRepo(s: RepoSnapshot): void;                        // recompute layout via buildLayout
   setAgents(a: AgentInfo[]): void; pushEvent(e: AgentEvent): void; setEvents(e: AgentEvent[]): void;
   select(path: string | null): void; hover(path: string | null): void; focusAgent(id: string | null): void;
@@ -154,6 +156,15 @@ export const useSky = create<SkyState>()((set, get) => ({
   colorMode: readColorMode(),
   hoods: null,
   colorPlan: null,
+  director: false,
+
+  setDirector(on) {
+    set({ director: on && !get().reducedMotion })
+  },
+
+  toggleDirector() {
+    get().setDirector(!get().director)
+  },
 
   setRepo(s) {
     const layout = buildLayout(s)

@@ -1,6 +1,7 @@
 // Camera: an intro swoop that ends framed on the whole city, a glide back to that framing on repo open and
 // on F, smooth fly-to for the selected building or focused drone, a cinematic flyover for recordings,
-// damped orbit controls and a slow auto-orbit after 25 s without input.
+// damped orbit controls and a slow auto-orbit after 25 s without input. Director mode (Director.tsx) takes the
+// camera between shots while it is on and the user is hands-off; every other move here runs before it.
 // The framing keeps the orbit target centred in the part of the window the HUD leaves free (see framing.ts).
 import { useEffect, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
@@ -12,6 +13,7 @@ import { useSky } from '../state/store'
 import { useUi } from '../lib/ui'
 import { getDroneVec } from './registry'
 import {
+  CAMERA_FOV_DEG,
   DEFAULT_MAX_HEIGHT,
   framePose,
   maxBuildingHeight,
@@ -22,6 +24,8 @@ import {
   type Rect
 } from './framing'
 import { clearFlyoverCancel, flyoverCancelled, setCameraSettled, takeFlyoverRequest, type FlyoverRequest } from './capture'
+import { director } from './Director'
+import type { View } from './shots'
 
 const INTRO_S = 2.5
 const FLY_S = 0.9
@@ -37,6 +41,8 @@ const FLY_HIGH_SCALE = 1.3
 const FLY_HIGH_PHI = 0.4
 
 const FROM = { r: 330, phi: 0.06, theta: 0 }
+/** Orbit limits outside director mode. The director widens them while it sets the pose itself. */
+const NORMAL_LIMITS = { minDistance: 18, maxDistance: CITY_MAX_DIST, minPolarAngle: 0.15, maxPolarAngle: 1.35 }
 
 interface Controls {
   target: Vector3;
@@ -163,6 +169,34 @@ function applyView(camera: Camera, size: { width: number; height: number }, off:
   ;(camera as PerspectiveCamera).setViewOffset(size.width, size.height, off.x, off.y, size.width, size.height)
 }
 
+/** Puts the camera at a director view. The orbit controls keep running but cannot clamp the pose away. */
+function applyDirected(camera: Camera, controls: Controls, v: View): void {
+  controls.autoRotate = false
+  controls.minPolarAngle = 0
+  controls.maxPolarAngle = Math.PI
+  controls.minDistance = 2
+  controls.maxDistance = 2000
+  controls.target.set(v.look.x, v.look.y, v.look.z)
+  camera.position.set(v.pos.x, v.pos.y, v.pos.z)
+  camera.lookAt(controls.target)
+  const cam = camera as PerspectiveCamera
+  const fov = CAMERA_FOV_DEG + v.fovBump
+  if (Math.abs(cam.fov - fov) > 1e-4) {
+    cam.fov = fov
+    cam.updateProjectionMatrix()
+  }
+}
+
+/** Gives the camera back to the orbit controls with their normal limits and the city lens. */
+function releaseDirected(camera: Camera, controls: Controls): void {
+  Object.assign(controls, NORMAL_LIMITS)
+  const cam = camera as PerspectiveCamera
+  if (cam.fov !== CAMERA_FOV_DEG) {
+    cam.fov = CAMERA_FOV_DEG
+    cam.updateProjectionMatrix()
+  }
+}
+
 export function CameraRig() {
   const reduced = useSky((s) => s.reducedMotion)
   const controlsRef = useRef<Controls | null>(null)
@@ -172,38 +206,61 @@ export function CameraRig() {
   const flight = useRef<Flight | null>(null)
   const pending = useRef<Pending | null>(null)
   const frameWanted = useRef(false)
+  const directing = useRef(false)
   const lastInput = useRef(performance.now())
   const scratch = useRef({ tmp: new Vector3(), end: new Vector3() }).current
 
-  // Input resets the idle timer and stops the auto-orbit.
+  // Input resets the idle timer and stops the auto-orbit. Anything the user does with the camera or the keyboard
+  // (outside the HUD panels and overlays) also pauses director mode.
   useEffect(() => {
     const onStart = () => {
       lastInput.current = performance.now()
+      director.noteInput()
+    }
+    const onPointer = (e: Event) => {
+      if ((e.target as Element | null)?.closest?.('.city-layer')) director.noteInput()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'v' || e.key === 'V') return
+      const ui = useUi.getState()
+      if (ui.palette || ui.dispatch || ui.digest) return
+      const tag = (e.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      director.noteInput()
     }
     const unsubscribe = useSky.subscribe((s, prev) => {
       if (s.selectedPath !== prev.selectedPath && s.selectedPath) {
         pending.current = { kind: 'building', path: s.selectedPath }
         lastInput.current = performance.now()
+        director.pause()
       }
       if (s.focusAgentId !== prev.focusAgentId && s.focusAgentId) {
         pending.current = { kind: 'drone', id: s.focusAgentId }
         lastInput.current = performance.now()
+        director.pause()
       }
       // A repo opened (or F pressed): glide to the framing.
       if (s.frameSeq !== prev.frameSeq || (s.repo !== null && s.repo.root !== prev.repo?.root)) {
         frameWanted.current = true
+        director.pause()
       }
     })
+    window.addEventListener('pointerdown', onPointer, true)
+    window.addEventListener('wheel', onPointer, { capture: true, passive: true })
+    window.addEventListener('keydown', onKey)
     // Controls mount before this effect runs (refs attach during commit).
     const c = controlsRef.current
     c?.addEventListener('start', onStart)
     return () => {
       c?.removeEventListener('start', onStart)
+      window.removeEventListener('pointerdown', onPointer, true)
+      window.removeEventListener('wheel', onPointer, true)
+      window.removeEventListener('keydown', onKey)
       unsubscribe()
     }
   }, [])
 
-  useFrame(({ camera, clock, size }) => {
+  useFrame(({ camera, clock, size }, delta) => {
     const controls = controlsRef.current
     if (!controls) return
     const now = performance.now()
@@ -352,6 +409,27 @@ export function CameraRig() {
         camera.position.lerpVectors(f.fromPos, scratch.end, e)
         if (u >= 1) fly.current = null
       }
+    }
+
+    // Director: auto cuts while it is on and the user is hands-off. It always advances its clock, so its idle and
+    // pause timers keep counting even on frames when it is not allowed to move the camera.
+    const dv = director.update({
+      dt: delta,
+      on: useSky.getState().director,
+      reduced,
+      allowed: fly.current === null,
+      current: { pos: camera.position, look: controls.target, fovBump: 0 },
+      frame: frame.pose
+    })
+    if (dv) {
+      applyDirected(camera, controls, dv)
+      directing.current = true
+      setCameraSettled(false)
+      return
+    }
+    if (directing.current) {
+      directing.current = false
+      releaseDirected(camera, controls)
     }
 
     // Idle auto-orbit.

@@ -14,6 +14,7 @@ import { DispatchSheet } from './hud/DispatchSheet'
 import { DigestCard } from './hud/DigestCard'
 import { Toasts } from './hud/Toasts'
 import { CapturePill } from './hud/Capture'
+import { DirectorBars } from './hud/DirectorBars'
 import { cancelCapture, captureBusy, recordFlyover, takeSnapshot, useCapture } from './lib/capture'
 
 // The 3D scene is code-split. If it fails to load or throws, the window keeps a static gradient.
@@ -104,6 +105,9 @@ function onKeyDown(e: KeyboardEvent): void {
       break
     case 'c':
       s.cycleColorMode()
+      break
+    case 'v':
+      if (s.repo) s.toggleDirector()
       break
     case 'f':
       s.select(null)
@@ -199,6 +203,7 @@ export function App() {
         <DispatchGate />
         <CapturePill />
       </div>
+      <DirectorBars />
     </>
   )
 }

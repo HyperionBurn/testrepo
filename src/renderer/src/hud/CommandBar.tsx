@@ -7,7 +7,7 @@ import { basename, dirname, fuzzyScore, middleEllipsis } from '../lib/format'
 import { COLOR_MODE_LABEL, type ColorMode } from '../lib/colorModes'
 import { pickAndOpen, setMode } from '../lib/actions'
 import { Overlay } from './Overlay'
-import { IconArrowRight, IconClock, IconDoc, IconFolder, IconLink, IconSend, IconSparkle, IconWave, IconReplay } from './icons'
+import { IconArrowRight, IconClock, IconDoc, IconFolder, IconLink, IconSend, IconSparkle, IconVideo, IconWave, IconReplay } from './icons'
 
 const COLOR_ACTION_META: Record<ColorMode, { sub: string; icon: ReactNode }> = {
   area: { sub: 'One hue per neighborhood', icon: <IconFolder size={13} /> },
@@ -130,6 +130,18 @@ function actionItems(q: string, color: ColorMode): Item[] {
       run: () => {
         close()
         setMode('git')
+      }
+    },
+    {
+      key: 'a-director',
+      group: 'Actions',
+      label: 'Toggle director camera',
+      sub: 'Cut between shots of the busy parts of the city',
+      icon: <IconVideo size={13} />,
+      hint: 'V',
+      run: () => {
+        close()
+        useSky.getState().toggleDirector()
       }
     },
     {

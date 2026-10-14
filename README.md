@@ -120,3 +120,5 @@ Issues and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.
 ## Credits
 
 *Built overnight by a swarm of AI agents. Skyline watched them build it.*
+
+City models and textures: [Kenney City Kit](https://kenney.nl) (CC0). Full credits in [docs/CREDITS.md](docs/CREDITS.md).

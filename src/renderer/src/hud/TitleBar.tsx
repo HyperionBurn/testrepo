@@ -5,7 +5,7 @@ import { compactNumber, usd } from '../lib/format'
 import { useNow } from '../lib/hooks'
 import { pickAndOpen } from '../lib/actions'
 import { CaptureMenu } from './Capture'
-import { IconChevronDown, IconFolder, IconGitBranch, IconMinus, IconSearch, IconSquare, IconX, SkylineGlyph } from './icons'
+import { IconChevronDown, IconFolder, IconGitBranch, IconMinus, IconSearch, IconSquare, IconVideo, IconX, SkylineGlyph } from './icons'
 
 const MODE_META: Record<Mode, { label: string; color: string; live: boolean }> = {
   live: { label: 'Live', color: 'var(--success)', live: true },
@@ -17,6 +17,8 @@ export function TitleBar() {
   const repo = useSky((s) => s.repo)
   const agents = useSky((s) => s.agents)
   const mode = useSky((s) => s.mode)
+  const director = useSky((s) => s.director)
+  const reduced = useSky((s) => s.reducedMotion)
   const now = useNow(30_000)
   const platform = window.skyline.platform
   const isWin = platform === 'win32'
@@ -92,6 +94,20 @@ export function TitleBar() {
       </button>
 
       {repo && <CaptureMenu />}
+
+      {repo && (
+        <button
+          className="capsule capsule--ghost capsule--sm"
+          onClick={() => useSky.getState().toggleDirector()}
+          disabled={reduced}
+          aria-pressed={director}
+          style={director ? { color: 'var(--accent)' } : undefined}
+          title={reduced ? 'Director camera is off with reduced motion' : 'Director camera: cuts between shots of the busy parts of the city (V)'}
+        >
+          <IconVideo size={13} />
+          <span className="muted">Director</span>
+        </button>
+      )}
 
       {repo ? (
         <button className="capsule capsule--ghost capsule--sm" onClick={() => void pickAndOpen()} title="Open another repository (Ctrl O)">
