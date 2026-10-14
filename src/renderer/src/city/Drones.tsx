@@ -729,7 +729,9 @@ export class Fleet implements FxSystem {
       const hb = i * HIST * 3
       for (let k = 0; k < HIST; k++) {
         const v = (i * HIST + k) * 2
-        const p = hb + ((s.histHead - k + HIST) % HIST) * 3
+        // Beyond the recorded history, collapse onto the last valid point: stale slots would stretch a streak.
+        const kv = Math.min(k, Math.max(0, n - 1))
+        const p = hb + ((s.histHead - kv + HIST) % HIST) * 3
         const px = this.histPos[p] ?? 0
         const py = this.histPos[p + 1] ?? 0
         const pz = this.histPos[p + 2] ?? 0

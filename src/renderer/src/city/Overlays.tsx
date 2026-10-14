@@ -64,7 +64,7 @@ export class CageSystem implements FxSystem {
     this.lineGeo.setAttribute('position', new BufferAttribute(this.linePos, 3).setUsage(DynamicDrawUsage))
     this.lineGeo.setAttribute('color', new BufferAttribute(this.lineCol, 3).setUsage(DynamicDrawUsage))
     this.lineMat = new LineBasicMaterial({
-      vertexColors: true, transparent: true, opacity: 0.9, blending: AdditiveBlending, depthWrite: false, toneMapped: false
+      vertexColors: true, transparent: true, opacity: 0.32, blending: AdditiveBlending, depthWrite: false, toneMapped: false
     })
     this.lines = new LineSegments(this.lineGeo, this.lineMat)
     this.lines.frustumCulled = false
