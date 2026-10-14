@@ -101,7 +101,7 @@ describe('metro plan', () => {
     expect(Math.max(...core)).toBeGreaterThan(18)
     const p95 = [...core].sort((a, b) => a - b)[Math.floor(core.length * 0.95)]!
     expect(p95).toBeGreaterThan(mean(edge) * 2)
-    expect(mean(edge)).toBeLessThan(40)
+    expect(mean(edge)).toBeLessThan(60)
   })
 
   it('places 6 to 8 cores on the island and across the rivers', () => {

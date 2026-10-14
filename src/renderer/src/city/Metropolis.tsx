@@ -127,8 +127,6 @@ void main() {
   float r = h21(id + sd);
   float run = step(0.86, h21(vec2(id.y + 3.0, sd)));
   float lit = max(step(r, 0.40), run * step(h21(id * 1.3 + sd + 7.0), 0.7));
-  // Sparse bright office floors: a few panes at full brightness.
-  float bright = step(0.985, h21(id * 2.3 + sd + 31.0)) * 0.8;
   float kind = h21(id * 1.7 + sd + 19.0);
   vec3 winCol = kind < 0.65 ? vec3(1.0, 0.85, 0.63) : kind < 0.80 ? vec3(1.0, 0.55, 0.22) : kind < 0.95 ? vec3(0.86, 0.91, 1.0) : vec3(0.35, 0.55, 1.0);
   float inten = 0.7 + 0.6 * h21(id * 3.1 + sd + 5.0);
@@ -139,7 +137,8 @@ void main() {
   float aa = 1.0 - smoothstep(0.08, 0.45, px);
   // Far away the lit panes average out to one warm tone, so no per-window colour can alias into speckle.
   vec3 avgCol = vec3(0.95, 0.72, 0.44) * 0.13 * uNight;
-  vec3 col = wall + winCol * (lit * inten * pane * aa * uWinGain * uNight * (1.0 + bright)) + avgCol * (1.0 - aa) * uWinGain;
+  // Individual panes stay warm and below 1.2 (no white squares); only the far average is boosted at night.
+  vec3 col = wall + winCol * (lit * inten * pane * aa * 0.9 * uWinGain) + avgCol * (1.0 - aa) * uWinGain;
   // Roofs are dark tar. Crowns are lit only on about 15 % of the tallest lots, as a thin warm band on the faces.
   if (n.y > 0.5) col = vec3(0.018, 0.018, 0.022);
   float crownGate = step(0.85, h21(vec2(vSeed * 71.0, 9.0)));

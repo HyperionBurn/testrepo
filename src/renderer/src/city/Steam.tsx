@@ -48,7 +48,8 @@ void main() {
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
   gl_PointSize = clamp(size * uScale * uPx * 1000.0 / -mv.z, 1.0, 256.0);
-  vA = pow(sin(3.14159265 * t), 1.5) * 0.5;
+  // Envelope in time, and a fade with distance so only the plumes near the camera read.
+  vA = sin(3.14159265 * t) * 0.8 * (1.0 - smoothstep(40.0, 120.0, -mv.z));
   vT = t;
   vY = p.y;
 }`
@@ -62,8 +63,7 @@ varying float vY;
 void main() {
   vec2 c = gl_PointCoord - 0.5;
   float d = length(c) * 2.0;
-  float soft = 1.0 - smoothstep(0.0, 1.0, d);
-  soft *= soft;
+  float soft = pow(clamp(1.0 - d, 0.0, 1.0), 1.5);
   // Warm orange near the street, bluish-white higher up and older puffs dimmer.
   vec3 warm = vec3(1.0, 0.56, 0.24);
   vec3 cool = vec3(0.7, 0.78, 1.0);
@@ -106,7 +106,7 @@ export function buildSteam(emitters: readonly SteamEmitter[], pixelRatio: number
     uTime: { value: 0 },
     uWind: { value: [WIND[0], WIND[1]] as [number, number] },
     uPx: { value: pixelRatio },
-    uIntensity: { value: 0.85 },
+    uIntensity: { value: 1.2 },
     uScale: { value: 1 },
     uAlpha: { value: 1 }
   }

@@ -158,15 +158,17 @@ export function lotHeight(x: number, z: number, cores: readonly Core[], seed: nu
     sum += c.strength * Math.exp(-d2 / (2 * c.r * c.r))
   }
   const mask = smooth(0.15, 0.6, sum)
+  const r = Math.hypot(x, z)
+  // Distance-dependent scale: far towers look as small as near ones, so the repo spire stays the hero.
+  const dScale = 1 + 5 * smooth(250, 1100, r)
   const n2 = hash3(Math.round(x * 4), Math.round(z * 4), 13, seed)
   const M = 3 + 3 * rnd
-  let h = M * (1 + mask * (1.2 + 1.8 * n2))
+  let h = M * (1 + mask * (1.2 + 1.8 * n2) * dScale)
   const needle = mask > 0.3 && hash3(Math.round(x * 4), Math.round(z * 4), 11, seed) < 0.01
-  if (needle) h = 20 + 12 * hash3(Math.round(x * 4), Math.round(z * 4), 17, seed)
-  const r = Math.hypot(x, z)
-  if (r > 1300) h *= 0.5
+  if (needle) h = (12 + 10 * hash3(Math.round(x * 4), Math.round(z * 4), 17, seed)) * dScale
+  if (r > 1500) h *= 0.5
   h *= 0.75 + 0.5 * hash3(Math.round(x * 4), Math.round(z * 4), 19, seed)
-  return { h: Math.max(1.6, h), spire: needle, needle }
+  return { h: Math.max(1.6, Math.min(h, 400)), spire: needle, needle }
 }
 
 // ---- The plan --------------------------------------------------------------------------------------------
