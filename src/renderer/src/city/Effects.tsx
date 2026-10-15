@@ -1,13 +1,13 @@
-// Post-processing chain: bloom for lit windows and lamps, a wide halation glow, ACES tone mapping, the grade
-// (split toning, lift, grain), chromatic aberration at the edges, a soft vignette and SMAA.
+// Post-processing chain: screen-space ambient occlusion (N8AO, contact shadows in street canyons and at building
+// bases), bloom for the brightest windows and lamps, a faint halation glow, ACES tone mapping, the grade (split
+// toning, lift, S-curve, grain), a soft vignette and SMAA.
 // Only mounted when the GPU keeps up and reduced motion is off (CityCanvas); otherwise the scene renders directly.
-// Quality steps down on its own when the frame rate sags: halation first, then grain and aberration, then the
-// bloom radius. A capture always renders at level 0.
+// Quality steps down on its own when the frame rate sags: ambient occlusion first, then halation, then grain, then
+// the bloom radius. A capture always renders at level 0.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
-import { Bloom, ChromaticAberration, EffectComposer, SMAA, ToneMapping, Vignette } from '@react-three/postprocessing'
+import { Bloom, EffectComposer, N8AO, SMAA, ToneMapping, Vignette } from '@react-three/postprocessing'
 import { ToneMappingMode } from 'postprocessing'
-import { Vector2 } from 'three'
 import { useSky } from '../state/store'
 import { GradeEffect } from './Grade'
 import { GRADES, MAX_DEGRADE_LEVEL, degradeGrade } from './gradeParams'
@@ -65,10 +65,18 @@ export function Effects() {
     grade.apply(params, !reduced)
   }, [grade, params, reduced])
 
-  const aberration = useMemo(() => new Vector2(params.ca, params.ca), [params.ca])
-
   return (
     <EffectComposer multisampling={0}>
+      {params.ao.intensity > 0 ? (
+        // N8AO darkens the whole frame by its occlusion term, so it sits before bloom: lit windows keep their glow.
+        <N8AO
+          halfRes
+          aoRadius={params.ao.radius}
+          distanceFalloff={params.ao.falloff}
+          intensity={params.ao.intensity}
+          quality="medium"
+        />
+      ) : <></>}
       <Bloom
         mipmapBlur
         luminanceThreshold={params.bloom.threshold}
@@ -86,7 +94,6 @@ export function Effects() {
         />
       ) : <></>}
       <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-      {params.ca > 0 ? <ChromaticAberration offset={aberration} radialModulation modulationOffset={0.15} /> : <></>}
       <primitive object={grade} dispose={null} />
       <Vignette eskil={false} offset={0.22} darkness={params.vignette} />
       <SMAA />

@@ -1,0 +1,4 @@
+/* A marketing still hides the HUD on screen while it renders (the PNG never contains the HUD, it is the city canvas). */
+html[data-shot='clean'] .hud {
+  visibility: hidden;
+}

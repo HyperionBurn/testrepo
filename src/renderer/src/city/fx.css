@@ -1,5 +1,6 @@
 /* Agent FX overlays: name tags (glass pill) and cost/token popups. Scoped by class names prefixed fx-. */
 .fx-tag {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -53,10 +54,35 @@
   opacity: 0.5;
   transform: translateY(-4px) scale(0.94);
 }
+/* A tag pushed off its drone by the stacking gets a hairline back to it (length set by Drones.tsx). */
+.fx-tag::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 1px;
+  height: var(--lead, 0px);
+  background: linear-gradient(180deg, rgba(233, 239, 255, 0.5), rgba(233, 239, 255, 0));
+  pointer-events: none;
+  display: none;
+}
+.fx-tag[data-lead='up']::after {
+  display: block;
+  bottom: 100%;
+  background: linear-gradient(0deg, rgba(233, 239, 255, 0.5), rgba(233, 239, 255, 0));
+}
+.fx-tag[data-lead='down']::after {
+  display: block;
+  top: 100%;
+}
+/* One merged line ('+$0.01 · 1.5k tok'), small and quiet: it reads as a tick, not a headline. */
 .fx-pop {
-  font: 700 12px/1 "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+  font: 600 10.5px/1 "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+  letter-spacing: 0.02em;
   color: #fff;
-  text-shadow: 0 0 8px currentColor, 0 1px 2px rgba(0, 0, 0, 0.8);
+  background: rgba(8, 10, 20, 0.5);
+  border-radius: 999px;
+  padding: 3px 8px;
+  text-shadow: 0 0 6px currentColor;
   white-space: nowrap;
   pointer-events: none;
   font-variant-numeric: tabular-nums;

@@ -14,8 +14,10 @@ export interface GradeParams {
   grain: number // film grain amplitude, peak-to-peak fraction
   ca: number // chromatic aberration offset at the frame edge (UV units)
   vignette: number // darkness of the vignette
+  curve: number // strength of the gentle S-curve on display values (0 = linear)
   bloom: { intensity: number; threshold: number; radius: number }
   halation: { intensity: number; threshold: number; radius: number }
+  ao: { intensity: number; radius: number; falloff: number } // N8AO contact shadows (intensity 0 = off)
 }
 
 /** Hard limits. Anything outside is clamped, so a preset edit cannot push the image past the brief. */
@@ -33,7 +35,11 @@ export const GRADE_LIMITS = {
   bloomRadius: [0.3, 1] as const,
   halationIntensity: [0, 0.6] as const,
   halationThreshold: [0.3, 0.8] as const,
-  halationRadius: [0.6, 1] as const
+  halationRadius: [0.6, 1] as const,
+  curve: [0, 0.6] as const,
+  aoIntensity: [0, 3] as const,
+  aoRadius: [1, 6] as const,
+  aoFalloff: [0.2, 3] as const
 }
 
 function clamp(v: number, [lo, hi]: readonly [number, number]): number {
@@ -67,22 +73,32 @@ export function clampGrade(p: GradeParams): GradeParams {
       intensity: clamp(p.halation.intensity, L.halationIntensity),
       threshold: clamp(p.halation.threshold, L.halationThreshold),
       radius: clamp(p.halation.radius, L.halationRadius)
+    },
+    curve: clamp(p.curve, L.curve),
+    ao: {
+      intensity: clamp(p.ao.intensity, L.aoIntensity),
+      radius: clamp(p.ao.radius, L.aoRadius),
+      falloff: clamp(p.ao.falloff, L.aoFalloff)
     }
   }
 }
 
+// Photographic, not video-game: deep blue-black blacks, a soft shoulder on the highlights, bloom only for the
+// brightest windows and lamps, a whisper of halation and grain, and no chromatic aberration.
 const BASE: GradeParams = {
-  lift: [0.01, 0.012, 0.022],
-  shadowTint: [0.82, 0.95, 1.12],
-  highTint: [1.1, 1.0, 0.86],
-  split: 0.1,
-  sat: 1.04,
-  warmSat: 0.22,
-  grain: 0.02,
-  ca: 0.0005,
-  vignette: 0.5,
-  bloom: { intensity: 1.2, threshold: 0.75, radius: 0.7 },
-  halation: { intensity: 0.35, threshold: 0.5, radius: 0.95 }
+  lift: [0.005, 0.007, 0.015],
+  shadowTint: [0.84, 0.95, 1.1],
+  highTint: [1.06, 1.0, 0.9],
+  split: 0.08,
+  sat: 1.0,
+  warmSat: 0.12,
+  grain: 0.006,
+  ca: 0,
+  vignette: 0.4,
+  curve: 0.35,
+  bloom: { intensity: 0.8, threshold: 0.85, radius: 0.6 },
+  halation: { intensity: 0.12, threshold: 0.7, radius: 0.8 },
+  ao: { intensity: 2, radius: 3, falloff: 1 }
 }
 
 /** The grade for each time of day. Night lifts toward brown, dawn toward lilac. */
@@ -90,40 +106,39 @@ export const GRADES: Record<TimeOfDay, GradeParams> = {
   blue: BASE,
   night: {
     ...BASE,
-    lift: [0.012, 0.01, 0.016],
+    lift: [0.006, 0.006, 0.012],
     shadowTint: [0.8, 0.92, 1.1],
-    highTint: [1.12, 1.0, 0.84],
-    split: 0.12,
-    sat: 1.0,
-    warmSat: 0.3,
-    halation: { intensity: 0.5, threshold: 0.5, radius: 0.95 }
+    highTint: [1.1, 1.0, 0.86],
+    split: 0.1,
+    warmSat: 0.2,
+    bloom: { intensity: 0.9, threshold: 0.8, radius: 0.6 },
+    halation: { intensity: 0.18, threshold: 0.7, radius: 0.8 }
   },
   dawn: {
     ...BASE,
-    lift: [0.02, 0.014, 0.024],
+    lift: [0.008, 0.007, 0.014],
     shadowTint: [0.9, 0.92, 1.08],
-    highTint: [1.08, 1.0, 0.9],
-    split: 0.07,
-    sat: 1.0,
-    warmSat: 0.12,
-    halation: { intensity: 0.25, threshold: 0.5, radius: 0.9 }
+    highTint: [1.06, 1.0, 0.92],
+    split: 0.06,
+    halation: { intensity: 0.1, threshold: 0.7, radius: 0.8 }
   }
 }
 
 /**
- * Degradation steps, applied when the frame rate drops: level 1 drops the halation pass, level 2 drops the grain
- * and the chromatic aberration, level 3 shrinks the bloom radius. Capture always passes level 0.
+ * Degradation steps, applied when the frame rate drops. Level 1 drops the ambient occlusion, level 2 the halation,
+ * level 3 the grain and the chromatic aberration, level 4 shrinks the bloom radius. Capture always passes level 0.
  */
 export function degradeGrade(p: GradeParams, level: number): GradeParams {
-  const q: GradeParams = { ...p, bloom: { ...p.bloom }, halation: { ...p.halation } }
-  if (level >= 1) q.halation = { ...q.halation, intensity: 0 }
-  if (level >= 2) {
+  const q: GradeParams = { ...p, bloom: { ...p.bloom }, halation: { ...p.halation }, ao: { ...p.ao } }
+  if (level >= 1) q.ao = { ...q.ao, intensity: 0 }
+  if (level >= 2) q.halation = { ...q.halation, intensity: 0 }
+  if (level >= 3) {
     q.grain = 0
     q.ca = 0
   }
-  if (level >= 3) q.bloom.radius = Math.min(q.bloom.radius, 0.4)
+  if (level >= 4) q.bloom.radius = Math.min(q.bloom.radius, 0.4)
   return q
 }
 
 /** The number of degradation steps (0 = full quality). */
-export const MAX_DEGRADE_LEVEL = 3
+export const MAX_DEGRADE_LEVEL = 4

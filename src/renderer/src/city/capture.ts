@@ -12,6 +12,9 @@ export interface FlyoverRequest {
 
 interface GrabRequest {
   dpr: number;
+  /** Drawing-buffer size the grab waits for (a shot sets its own size); unset takes the frame as it is. */
+  px?: { w: number; h: number };
+  settle: number;
   deadline: number;
   settleFrames: number;
   resolve(canvas: HTMLCanvasElement): void;
@@ -21,15 +24,49 @@ interface GrabRequest {
 const GRAB_SETTLE_FRAMES = 3
 const GRAB_TIMEOUT_MS = 6000
 
+/** The poses a marketing shot can name. 'overview' is the default framing. */
+export type ShotPose = 'overview' | 'hudson-blue' | 'midtown-aerial' | 'canyon'
+
+/** A requested still (window.__skylineShot / the shot API). The ShotRig applies it inside the frame loop. */
+export interface ShotRequest {
+  /** Output size in CSS pixels; the render is ss times this in each direction, then downscaled. */
+  w: number;
+  h: number;
+  ss: number;
+  pose: ShotPose;
+  /** Neighborhood labels, drone name tags and cost popups: hidden in a shot unless asked for. */
+  labels: boolean;
+  tags: boolean;
+}
+
+let shot: ShotRequest | null = null
+
+/** The shot being rendered, or null. */
+export function currentShot(): ShotRequest | null {
+  return shot
+}
+
+export function setShot(s: ShotRequest | null): void {
+  shot = s
+}
+
+/** Whether labels, tags and popups draw. Always on in the normal UI; a shot hides them unless requested. */
+export function shotLayers(): { labels: boolean; tags: boolean } {
+  return shot ? { labels: shot.labels, tags: shot.tags } : { labels: true, tags: true }
+}
+
 let grab: GrabRequest | null = null
 let flyover: FlyoverRequest | null = null
 let flyoverCancel = false
 let settled = true
 
-/** Resolves with a copy of the canvas, taken in the frame after the camera settles at `dpr`. */
-export function requestGrab(dpr: number): Promise<HTMLCanvasElement> {
+/**
+ * Resolves with a copy of the canvas, taken in the frame after the camera settles at `dpr` (and at the drawing-buffer
+ * size `px`, when given).
+ */
+export function requestGrab(dpr: number, px?: { w: number; h: number }, settle = GRAB_SETTLE_FRAMES): Promise<HTMLCanvasElement> {
   return new Promise((resolve) => {
-    grab = { dpr, deadline: performance.now() + GRAB_TIMEOUT_MS, settleFrames: 0, resolve }
+    grab = { dpr, px, settle, deadline: performance.now() + GRAB_TIMEOUT_MS, settleFrames: 0, resolve }
   })
 }
 
@@ -41,9 +78,10 @@ export function serviceGrab(
 ): void {
   const g = grab
   if (!g) return
-  const ready = settled && Math.abs(pixelRatio - g.dpr) < 0.01
+  const sized = !g.px || (canvas.width === g.px.w && canvas.height === g.px.h)
+  const ready = settled && sized && Math.abs(pixelRatio - g.dpr) < 0.01
   g.settleFrames = ready ? g.settleFrames + 1 : 0
-  if (g.settleFrames < GRAB_SETTLE_FRAMES && now < g.deadline) return
+  if (g.settleFrames < g.settle && now < g.deadline) return
   grab = null
   const out = document.createElement('canvas')
   out.width = canvas.width

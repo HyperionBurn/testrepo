@@ -27,6 +27,8 @@ import { Signage } from './Signage'
 import { Steam } from './Steam'
 import { CameraRig } from './CameraRig'
 import { Effects } from './Effects'
+import { Environment } from './Environment'
+import { ShotRig } from './ShotRig'
 import { serviceGrab } from './capture'
 // Registers window.__skylineDemo (demo repo and fake agents) for screenshots and manual testing.
 import './dev/fixture'
@@ -105,6 +107,7 @@ export default function CityCanvas() {
           }}
         />
         <Sky />
+        <Environment />
         <Backdrop />
         <Atmosphere />
         <Ground />
@@ -127,6 +130,7 @@ export default function CityCanvas() {
         <FxStage />
         <Traffic />
         <CameraRig />
+        <ShotRig />
         <CaptureTap composed={composed} />
         {composed && <Effects />}
       </Canvas>

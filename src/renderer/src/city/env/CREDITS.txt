@@ -1,0 +1,4 @@
+HDRI environment maps (1k .hdr), used only for reflections on glass and wet roads (scene.environment, never the background).
+kloppenheim_02 (blue hour / dusk) - Poly Haven, https://polyhaven.com/a/kloppenheim_02 - CC0 1.0 (public domain)
+satara_night (night)              - Poly Haven, https://polyhaven.com/a/satara_night - CC0 1.0 (public domain)
+Downloaded from https://api.polyhaven.com/files/<id> (hdri -> 1k -> hdr).

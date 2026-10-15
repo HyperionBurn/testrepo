@@ -1,0 +1,619 @@
+{
+  "version": 1,
+  "atlasSize": 2048,
+  "cellSize": 512,
+  "gutter": 16,
+  "contentSize": 480,
+  "grid": 4,
+  "files": {
+    "albedo": "facade-albedo.jpg",
+    "emissive": "facade-emissive.png",
+    "normal": "facade-normal.jpg",
+    "orm": "facade-orm.jpg"
+  },
+  "source": "ambientCG (CC0) Facade001-020 1K JPG, https://ambientcg.com",
+  "cells": [
+    {
+      "index": 0,
+      "id": "brick-018",
+      "tone": "brick",
+      "mode": "triplet",
+      "col": 0,
+      "row": 0,
+      "cellPx": [
+        0,
+        0,
+        512,
+        512
+      ],
+      "contentPx": [
+        16,
+        16,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.0078125,
+        0.7578125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 6,
+      "bays": 6,
+      "tileHeightM": 21.0,
+      "tileWidthM": 21.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.4242,
+        0.4113,
+        0.4102
+      ],
+      "farEmissive": [
+        0.3229,
+        0.3151,
+        0.2439
+      ],
+      "notes": "Red-brick office, 6x6 windows per tile. A day, C fully lit."
+    },
+    {
+      "index": 1,
+      "id": "brick-020",
+      "tone": "brick",
+      "mode": "triplet",
+      "col": 1,
+      "row": 0,
+      "cellPx": [
+        512,
+        0,
+        512,
+        512
+      ],
+      "contentPx": [
+        528,
+        16,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.2578125,
+        0.7578125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 6,
+      "bays": 6,
+      "tileHeightM": 21.0,
+      "tileWidthM": 21.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.3762,
+        0.3685,
+        0.3713
+      ],
+      "farEmissive": [
+        0.2641,
+        0.2507,
+        0.1886
+      ],
+      "notes": "Brick piers with punched windows. A day, C fully lit."
+    },
+    {
+      "index": 2,
+      "id": "stone-019",
+      "tone": "stone",
+      "mode": "triplet",
+      "col": 2,
+      "row": 0,
+      "cellPx": [
+        1024,
+        0,
+        512,
+        512
+      ],
+      "contentPx": [
+        1040,
+        16,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.5078125,
+        0.7578125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 6,
+      "bays": 6,
+      "tileHeightM": 21.0,
+      "tileWidthM": 21.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.3511,
+        0.3551,
+        0.3613
+      ],
+      "farEmissive": [
+        0.2959,
+        0.2843,
+        0.2153
+      ],
+      "notes": "Grey stone piers and spandrels, 1980s office."
+    },
+    {
+      "index": 3,
+      "id": "glass-001",
+      "tone": "glass",
+      "mode": "glass",
+      "col": 3,
+      "row": 0,
+      "cellPx": [
+        1536,
+        0,
+        512,
+        512
+      ],
+      "contentPx": [
+        1552,
+        16,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.7578125,
+        0.7578125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 10,
+      "bays": 16,
+      "tileHeightM": 35.0,
+      "tileWidthM": 35.0,
+      "bayWidthM": 2.188,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.2872,
+        0.3,
+        0.313
+      ],
+      "farEmissive": [
+        0.1369,
+        0.1069,
+        0.063
+      ],
+      "notes": "Dark tinted curtain wall, black mullions."
+    },
+    {
+      "index": 4,
+      "id": "glass-006",
+      "tone": "glass",
+      "mode": "glass",
+      "col": 0,
+      "row": 1,
+      "cellPx": [
+        0,
+        512,
+        512,
+        512
+      ],
+      "contentPx": [
+        16,
+        528,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.0078125,
+        0.5078125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 8,
+      "bays": 14,
+      "tileHeightM": 28.0,
+      "tileWidthM": 28.0,
+      "bayWidthM": 2.0,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.4713,
+        0.491,
+        0.4909
+      ],
+      "farEmissive": [
+        0.099,
+        0.0772,
+        0.0456
+      ],
+      "notes": "Blue-grey glass panels, light mullions."
+    },
+    {
+      "index": 5,
+      "id": "night-007",
+      "tone": "office-night",
+      "mode": "night",
+      "col": 1,
+      "row": 1,
+      "cellPx": [
+        512,
+        512,
+        512,
+        512
+      ],
+      "contentPx": [
+        528,
+        528,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.2578125,
+        0.5078125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 12,
+      "bays": 12,
+      "tileHeightM": 42.0,
+      "tileWidthM": 42.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.059,
+        0.0643,
+        0.0559
+      ],
+      "farEmissive": [
+        0.0974,
+        0.1052,
+        0.0941
+      ],
+      "notes": "Night residential/office tower, lit apartment strips."
+    },
+    {
+      "index": 6,
+      "id": "night-008",
+      "tone": "office-night",
+      "mode": "night",
+      "col": 2,
+      "row": 1,
+      "cellPx": [
+        1024,
+        512,
+        512,
+        512
+      ],
+      "contentPx": [
+        1040,
+        528,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.5078125,
+        0.5078125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 12,
+      "bays": 12,
+      "tileHeightM": 42.0,
+      "tileWidthM": 42.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.0309,
+        0.029,
+        0.0238
+      ],
+      "farEmissive": [
+        0.04,
+        0.0389,
+        0.0321
+      ],
+      "notes": "Night office tower, dense small panes."
+    },
+    {
+      "index": 7,
+      "id": "night-009",
+      "tone": "office-night",
+      "mode": "night",
+      "col": 3,
+      "row": 1,
+      "cellPx": [
+        1536,
+        512,
+        512,
+        512
+      ],
+      "contentPx": [
+        1552,
+        528,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.7578125,
+        0.5078125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 12,
+      "bays": 12,
+      "tileHeightM": 42.0,
+      "tileWidthM": 42.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.0382,
+        0.0507,
+        0.0452
+      ],
+      "farEmissive": [
+        0.0834,
+        0.1033,
+        0.0959
+      ],
+      "notes": "Night glass tower with balconies, teal and warm interiors."
+    },
+    {
+      "index": 8,
+      "id": "night-011",
+      "tone": "office-night",
+      "mode": "night",
+      "col": 0,
+      "row": 2,
+      "cellPx": [
+        0,
+        1024,
+        512,
+        512
+      ],
+      "contentPx": [
+        16,
+        1040,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.0078125,
+        0.2578125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 12,
+      "bays": 12,
+      "tileHeightM": 42.0,
+      "tileWidthM": 42.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.0157,
+        0.0174,
+        0.0135
+      ],
+      "farEmissive": [
+        0.0308,
+        0.0335,
+        0.0273
+      ],
+      "notes": "Night tower, sparse lit panes."
+    },
+    {
+      "index": 9,
+      "id": "night-016",
+      "tone": "brick",
+      "mode": "night",
+      "col": 1,
+      "row": 2,
+      "cellPx": [
+        512,
+        1024,
+        512,
+        512
+      ],
+      "contentPx": [
+        528,
+        1040,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.2578125,
+        0.2578125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 12,
+      "bays": 12,
+      "tileHeightM": 42.0,
+      "tileWidthM": 42.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.1286,
+        0.0898,
+        0.0828
+      ],
+      "farEmissive": [
+        0.0184,
+        0.0153,
+        0.0106
+      ],
+      "notes": "Brown brick tower at night, lit panes between mullions."
+    },
+    {
+      "index": 10,
+      "id": "grid-012",
+      "tone": "brick",
+      "mode": "night",
+      "col": 2,
+      "row": 2,
+      "cellPx": [
+        1024,
+        1024,
+        512,
+        512
+      ],
+      "contentPx": [
+        1040,
+        1040,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.5078125,
+        0.2578125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 12,
+      "bays": 12,
+      "tileHeightM": 42.0,
+      "tileWidthM": 42.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.2555,
+        0.2161,
+        0.2046
+      ],
+      "farEmissive": [
+        0.0227,
+        0.0211,
+        0.0171
+      ],
+      "notes": "Brown brick and mullion grid, dense lit panes."
+    },
+    {
+      "index": 11,
+      "id": "grid-013",
+      "tone": "brick",
+      "mode": "night",
+      "col": 3,
+      "row": 2,
+      "cellPx": [
+        1536,
+        1024,
+        512,
+        512
+      ],
+      "contentPx": [
+        1552,
+        1040,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.7578125,
+        0.2578125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 12,
+      "bays": 12,
+      "tileHeightM": 42.0,
+      "tileWidthM": 42.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.3086,
+        0.2585,
+        0.2365
+      ],
+      "farEmissive": [
+        0.0572,
+        0.0498,
+        0.0372
+      ],
+      "notes": "Brown brick and mullion grid, warm interiors."
+    },
+    {
+      "index": 12,
+      "id": "grid-014",
+      "tone": "brick",
+      "mode": "night",
+      "col": 0,
+      "row": 3,
+      "cellPx": [
+        0,
+        1536,
+        512,
+        512
+      ],
+      "contentPx": [
+        16,
+        1552,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.0078125,
+        0.0078125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 12,
+      "bays": 12,
+      "tileHeightM": 42.0,
+      "tileWidthM": 42.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.2378,
+        0.2011,
+        0.1922
+      ],
+      "farEmissive": [
+        0.0074,
+        0.007,
+        0.0065
+      ],
+      "notes": "Brown brick and mullion grid, sparse lit panes."
+    },
+    {
+      "index": 13,
+      "id": "grid-015",
+      "tone": "concrete",
+      "mode": "night",
+      "col": 1,
+      "row": 3,
+      "cellPx": [
+        512,
+        1536,
+        512,
+        512
+      ],
+      "contentPx": [
+        528,
+        1552,
+        480,
+        480
+      ],
+      "uvRect": [
+        0.2578125,
+        0.0078125,
+        0.234375,
+        0.234375
+      ],
+      "floors": 12,
+      "bays": 12,
+      "tileHeightM": 42.0,
+      "tileWidthM": 42.0,
+      "bayWidthM": 3.5,
+      "floorHeightM": 3.5,
+      "farAlbedo": [
+        0.1959,
+        0.1869,
+        0.1803
+      ],
+      "farEmissive": [
+        0.1385,
+        0.1347,
+        0.1293
+      ],
+      "notes": "Grey concrete and mullion grid, lit offices."
+    }
+  ]
+}

@@ -14,6 +14,7 @@ import { isClick } from './registry'
 import { FOG_HEX } from './Sky'
 import { HAZE_DENSITY } from './metro'
 import { placeLabels, type LabelCandidate, type PlacedLabel } from './labelLayout'
+import { shotLayers } from './capture'
 
 const PLATE_HEIGHT_PER_DEPTH = 0.08
 
@@ -185,14 +186,24 @@ export function Districts({
 interface Label { mesh: Mesh; mat: MeshBasicMaterial; tex: CanvasTexture; geo: PlaneGeometry; pos: Vector3; h: number }
 
 const LABEL_CANVAS_H = 128
-const LABEL_PAD_PX = 28
-const LABEL_FONT = '800 96px "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif'
+const LABEL_PAD_PX = 24
+/** Quiet by design: a small semibold face, set in capitals with wide tracking, never a headline on the street. */
+const LABEL_FONT = '600 52px "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif'
+const LABEL_TRACKING_PX = 14
+/** World-unit height cap (10 m per unit): a plate can be large, its name still stays small. */
+const LABEL_MAX_H = 2.4
+const LABEL_OPACITY = 0.62
 
 let measureCtx: CanvasRenderingContext2D | null | undefined
 
 function setLabelFont(ctx: CanvasRenderingContext2D): void {
   ctx.font = LABEL_FONT
-  ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = '1px'
+  ;(ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = `${LABEL_TRACKING_PX}px`
+}
+
+/** The text as drawn: capitals, so every name reads as one quiet caption. */
+function captionOf(text: string): string {
+  return text.toUpperCase()
 }
 
 /** Width of a label's canvas in pixels: the text plus padding. Falls back to a rough estimate without a canvas. */
@@ -200,9 +211,9 @@ function labelWidthPx(text: string): number {
   if (measureCtx === undefined) {
     measureCtx = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d')
   }
-  if (!measureCtx) return text.length * 58 + 2 * LABEL_PAD_PX
+  if (!measureCtx) return captionOf(text).length * 40 + 2 * LABEL_PAD_PX
   setLabelFont(measureCtx)
-  return Math.ceil(measureCtx.measureText(text).width) + 2 * LABEL_PAD_PX
+  return Math.ceil(measureCtx.measureText(captionOf(text)).width) + 2 * LABEL_PAD_PX
 }
 
 /** Canvas aspect (width over height) of a label, as the placement sees it. */
@@ -210,7 +221,10 @@ function labelAspect(text: string): number {
   return labelWidthPx(text) / LABEL_CANVAS_H
 }
 
-/** Canvas-rendered label (system font, no network). Lies flat on its plate, centred on it. */
+/**
+ * Canvas-rendered caption (system font, no network). Lies flat on its plate, centred on it. Depth-tested: a building
+ * in front hides its part of the name, so a caption never sits across a roof.
+ */
 function makeLabel(p: PlacedLabel, glow: string): Label | null {
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')
@@ -219,29 +233,31 @@ function makeLabel(p: PlacedLabel, glow: string): Label | null {
   canvas.height = LABEL_CANVAS_H
   setLabelFont(ctx)
   ctx.textBaseline = 'middle'
-  ctx.lineJoin = 'round'
-  // A dark halo keeps the name readable over towers, a hue glow ties it to its neighborhood.
-  ctx.strokeStyle = 'rgba(3, 4, 10, 0.9)'
-  ctx.lineWidth = 9
-  ctx.shadowColor = glow
-  ctx.shadowBlur = 26
-  ctx.strokeText(p.key, LABEL_PAD_PX, LABEL_CANVAS_H / 2 + 4)
-  ctx.fillStyle = '#f1f6ff'
-  ctx.fillText(p.key, LABEL_PAD_PX, LABEL_CANVAS_H / 2 + 4)
+  // A soft dark shadow keeps the caption legible over the ground, a faint hue ties it to its neighborhood.
+  ctx.shadowColor = 'rgba(3, 4, 10, 0.85)'
+  ctx.shadowBlur = 10
+  ctx.shadowOffsetY = 1
+  ctx.fillStyle = glow
+  ctx.globalAlpha = 0.9
+  ctx.fillText(captionOf(p.key), LABEL_PAD_PX, LABEL_CANVAS_H / 2 + 2)
+  ctx.globalAlpha = 1
+  ctx.fillStyle = 'rgba(226, 234, 255, 0.92)'
+  ctx.fillText(captionOf(p.key), LABEL_PAD_PX, LABEL_CANVAS_H / 2 + 2)
   const tex = new CanvasTexture(canvas)
   tex.colorSpace = SRGBColorSpace
   tex.anisotropy = 4
-  const width = p.w
-  const geo = new PlaneGeometry(width, p.h)
-  // Labels ignore depth so towers in front do not hide the names; they fade with distance and size instead.
+  // The plane keeps the canvas aspect at a capped height: the name stays small whatever the plate size.
+  const h = Math.min(p.h, LABEL_MAX_H)
+  const width = h * (canvas.width / LABEL_CANVAS_H)
+  const geo = new PlaneGeometry(width, h)
   // Fog off: at framing distance the scene fog would wash a name into the sky color. Distance fades instead.
-  const mat = new MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false, fog: false, opacity: 0 })
+  const mat = new MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: true, fog: false, opacity: 0 })
   const mesh = new Mesh(geo, mat)
   mesh.rotation.x = -Math.PI / 2
   mesh.position.set(p.cx, 0.1, p.cz)
   mesh.raycast = () => {}
   mesh.renderOrder = 5
-  return { mesh, mat, tex, geo, pos: mesh.position.clone(), h: p.h }
+  return { mesh, mat, tex, geo, pos: mesh.position.clone(), h }
 }
 
 /**
@@ -286,12 +302,14 @@ function NeighborhoodLabels({
   useFrame(({ camera, size }) => {
     // On-screen label height in pixels, from the camera's vertical field of view.
     const pxPerUnit = size.height / (2 * Math.tan(((camera as PerspectiveCamera).fov * Math.PI) / 360))
+    const shown = shotLayers().labels ? 1 : 0
     for (const l of labels) {
       const dist = Math.max(1e-3, camera.position.distanceTo(l.pos))
-      const legible = smooth(7, 13, (l.h * pxPerUnit) / dist)
+      const legible = smooth(6, 12, (l.h * pxPerUnit) / dist)
       const near = smooth(10, 28, dist)
-      const far = 1 - smooth(380, 520, dist)
-      l.mat.opacity = 0.92 * near * far * legible
+      // Gone by the overview distance: the captions are for the street and the near city, not the skyline.
+      const far = 1 - smooth(190, 300, dist)
+      l.mat.opacity = LABEL_OPACITY * near * far * legible * shown
     }
   })
 

@@ -1,5 +1,6 @@
-// Cinematic grade as one postprocessing effect: lifted blacks, split toning (cool shadows, warm highlights),
-// a warm-weighted saturation boost, and animated film grain. Mounted by Effects.tsx after tone mapping, so it
+// Photographic grade as one postprocessing effect: lifted blacks (deep blue-black, never crushed), split toning
+// (cool shadows, warm highlights), a gentle S-curve for a soft shoulder, a warm-weighted saturation boost and very
+// light animated film grain. Mounted by Effects.tsx after tone mapping, so it
 // works on display-referred values. Parameters come from gradeParams.ts, clamped to its limits.
 import { Effect } from 'postprocessing'
 import { Uniform, Vector3, type WebGLRenderer, type WebGLRenderTarget } from 'three'
@@ -15,6 +16,7 @@ uniform float uSplit;
 uniform float uSat;
 uniform float uWarmSat;
 uniform float uGrain;
+uniform float uCurve;
 
 float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -32,6 +34,9 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor)
   float high = smoothstep(0.45, 0.95, l);
   c *= mix(vec3(1.0), uShadowTint, shadow * uSplit);
   c *= mix(vec3(1.0), uHighTint, high * uSplit);
+  // Gentle S-curve: contrast in the mids, a soft shoulder on the highlights, blacks left where they are.
+  vec3 k = clamp(c, 0.0, 1.0);
+  c = mix(c, k * k * (3.0 - 2.0 * k), uCurve);
   // Saturation: lamps and windows (warm, red over blue) gain more than the neutral walls.
   l = dot(c, vec3(0.2126, 0.7152, 0.0722));
   float warm = clamp(c.r - c.b, 0.0, 1.0);
@@ -57,7 +62,8 @@ export class GradeEffect extends Effect {
         ['uSplit', new Uniform(0)],
         ['uSat', new Uniform(1)],
         ['uWarmSat', new Uniform(0)],
-        ['uGrain', new Uniform(0)]
+        ['uGrain', new Uniform(0)],
+        ['uCurve', new Uniform(0)]
       ])
     })
   }
@@ -75,6 +81,7 @@ export class GradeEffect extends Effect {
     u.get('uSat')!.value = p.sat
     u.get('uWarmSat')!.value = p.warmSat
     u.get('uGrain')!.value = p.grain
+    u.get('uCurve')!.value = p.curve
   }
 
   update(_renderer: WebGLRenderer, _inputBuffer: WebGLRenderTarget, deltaTime = 0): void {

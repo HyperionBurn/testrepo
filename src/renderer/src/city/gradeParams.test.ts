@@ -12,8 +12,10 @@ const WILD: GradeParams = {
   grain: 0.5,
   ca: 0.01,
   vignette: 3,
+  curve: 9,
   bloom: { intensity: 10, threshold: 0, radius: 4 },
-  halation: { intensity: 2, threshold: 2, radius: 0 }
+  halation: { intensity: 2, threshold: 2, radius: 0 },
+  ao: { intensity: 9, radius: 0, falloff: 0 }
 }
 
 describe('grade parameter clamps', () => {
@@ -36,6 +38,10 @@ describe('grade parameter clamps', () => {
     expect(c.halation.intensity).toBeLessThanOrEqual(0.6)
     expect(c.halation.threshold).toBeGreaterThanOrEqual(0.3)
     expect(c.halation.radius).toBeGreaterThanOrEqual(0.6)
+    expect(c.curve).toBeLessThanOrEqual(0.6)
+    expect(c.ao.intensity).toBeLessThanOrEqual(3)
+    expect(c.ao.radius).toBeGreaterThanOrEqual(1)
+    expect(c.ao.falloff).toBeGreaterThanOrEqual(0.2)
   })
 
   it('does not change the input', () => {
@@ -54,10 +60,20 @@ describe('grade parameter clamps', () => {
     }
   })
 
-  it('keeps the grain at or under 3 percent and the aberration at or under 0.0006', () => {
+  it('is photographic: no aberration, faint grain, bloom only above a high threshold', () => {
     for (const t of TIMES_OF_DAY) {
-      expect(GRADES[t].grain).toBeLessThanOrEqual(0.03)
-      expect(GRADES[t].ca).toBeLessThanOrEqual(0.0006)
+      expect(GRADES[t].ca).toBe(0)
+      expect(GRADES[t].grain).toBeLessThanOrEqual(0.01)
+      expect(GRADES[t].bloom.threshold).toBeGreaterThanOrEqual(0.8)
+      expect(GRADES[t].halation.intensity).toBeLessThanOrEqual(0.2)
+    }
+  })
+
+  it('ambient occlusion is on for every preset, at a city-scale radius', () => {
+    for (const t of TIMES_OF_DAY) {
+      expect(GRADES[t].ao.intensity).toBeGreaterThan(0)
+      expect(GRADES[t].ao.radius).toBeGreaterThanOrEqual(2)
+      expect(GRADES[t].ao.radius).toBeLessThanOrEqual(4)
     }
   })
 })
@@ -69,28 +85,31 @@ describe('degradation steps', () => {
     expect(degradeGrade(full, 0)).toEqual(full)
   })
 
-  it('level 1 drops the halation first and keeps grain and aberration', () => {
+  it('level 1 drops the ambient occlusion first and keeps the rest', () => {
     const d = degradeGrade(full, 1)
+    expect(d.ao.intensity).toBe(0)
+    expect(d.halation.intensity).toBe(full.halation.intensity)
+    expect(d.grain).toBe(full.grain)
+    expect(d.bloom.radius).toBe(full.bloom.radius)
+  })
+
+  it('level 2 then drops the halation', () => {
+    const d = degradeGrade(full, 2)
+    expect(d.ao.intensity).toBe(0)
     expect(d.halation.intensity).toBe(0)
     expect(d.grain).toBe(full.grain)
-    expect(d.ca).toBe(full.ca)
-    expect(d.bloom.radius).toBe(full.bloom.radius)
   })
 
-  it('level 2 then drops grain and aberration', () => {
-    const d = degradeGrade(full, 2)
-    expect(d.grain).toBe(0)
-    expect(d.ca).toBe(0)
-    expect(d.bloom.radius).toBe(full.bloom.radius)
-  })
-
-  it('level 3 shrinks the bloom radius last', () => {
+  it('level 3 drops the grain, and level 4 shrinks the bloom radius last', () => {
+    const d3 = degradeGrade(full, 3)
+    expect(d3.grain).toBe(0)
+    expect(d3.bloom.radius).toBe(full.bloom.radius)
     expect(degradeGrade(full, MAX_DEGRADE_LEVEL).bloom.radius).toBeLessThanOrEqual(0.4)
   })
 
   it('does not mutate the source grade', () => {
     const before = JSON.stringify(full)
-    degradeGrade(full, 3)
+    degradeGrade(full, 4)
     expect(JSON.stringify(full)).toBe(before)
   })
 })

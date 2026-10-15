@@ -18,9 +18,11 @@ import { droneVec, forgetDrone, getDroneVec, setTagEl, tagEntries } from './regi
 import { registerCounter, registerFx, emitFx, type FxCtx, type FxSystem } from './fx/core'
 import { getParticles, getRings } from './fx/pools'
 import {
-  bankTarget, formationOffset, formatCost, formatTokens, headingOf, makeRng, POPUP_GAP_S, POPUP_MIN_COST,
-  POPUP_MIN_TOKENS, tokenTotal, trailOn, unitHash, wrapAngle
+  bankTarget, formationOffset, formatCost, formatTokens, headingOf, makeRng, POPUP_MERGE_S, popupDue, popupLine,
+  tokenTotal, trailOn, unitHash, wrapAngle
 } from './fx/model'
+import { selectTags, stackTags, type TagCandidate } from './tagPolicy'
+import { shotLayers } from './capture'
 import { STATUS_META } from '../hud/meta'
 import './fx.css'
 
@@ -402,7 +404,7 @@ export class Fleet implements FxSystem {
         s.lastTok = tok
         s.pendCost = 0
         s.pendTok = 0
-        s.lastPop = this.lastTime - POPUP_GAP_S
+        s.lastPop = this.lastTime - POPUP_MERGE_S
         s.bLayout = null
       }
       const s = this.ships[slot]!
@@ -631,17 +633,14 @@ export class Fleet implements FxSystem {
     s.alpha += (s.alphaTo - s.alpha) * Math.min(1, dt * 3)
     s.flash = Math.max(0, s.flash - dt * 0.75)
 
-    // Popups for new spend, at most one per agent per POPUP_GAP_S. Live mode only.
-    if (this.live && !reduced && t - s.lastPop >= POPUP_GAP_S && (s.pendCost >= POPUP_MIN_COST || s.pendTok >= POPUP_MIN_TOKENS)) {
-      const hex = `#${s.color.getHexString()}`
-      if (s.pendCost >= POPUP_MIN_COST) {
-        emitFx({ type: 'popup', agentId: s.id, text: `+${formatCost(s.pendCost)}`, color: hex, x: s.pos.x, y: s.pos.y + 4.2, z: s.pos.z })
-        s.pendCost = 0
+    // Popups for new spend: one merged line per agent per POPUP_MERGE_S window ('+$0.01 · 1.5k tok'). Live mode only.
+    if (this.live && !reduced && popupDue(t, s.lastPop, s.pendCost, s.pendTok)) {
+      const text = popupLine(s.pendCost, s.pendTok)
+      if (text) {
+        emitFx({ type: 'popup', agentId: s.id, text, color: `#${s.color.getHexString()}`, x: s.pos.x, y: s.pos.y + 4.6, z: s.pos.z })
       }
-      if (s.pendTok >= POPUP_MIN_TOKENS) {
-        emitFx({ type: 'popup', agentId: s.id, text: `+${formatTokens(s.pendTok)}`, color: hex, x: s.pos.x, y: s.pos.y + 5.4, z: s.pos.z })
-        s.pendTok = 0
-      }
+      s.pendCost = 0
+      s.pendTok = 0
       s.lastPop = t
     }
 
@@ -827,11 +826,10 @@ function ShipTag({ fleet, label }: { fleet: Fleet; label: ShipLabel }) {
   )
 }
 
-interface Box { l: number; r: number; t: number; b: number }
-
 /**
- * Places the name tags in screen space: each tag is projected from its drone, and tags that would
- * overlap an already placed one are pushed down. Runs once per frame over the registered tags.
+ * Places the name tags in screen space. Only active agents get a tag, and at most MAX_TAGS of them (tagPolicy):
+ * the rest stay as drones. The chosen tags are stacked so none overlaps another; a tag pushed off its drone gets a
+ * leader line back to it. A shot hides every tag unless it asked for them.
  */
 function TagLayout() {
   const camera = useThree((s) => s.camera)
@@ -840,46 +838,57 @@ function TagLayout() {
   const tmp = useMemo(() => new Vector3(), [])
 
   useFrame(() => {
-    const items: { el: HTMLElement; x: number; y: number; w: number; h: number }[] = []
+    const showTags = shotLayers().tags
+    const cands: TagCandidate[] = []
+    const els = new Map<string, { el: HTMLElement; w: number; h: number }>()
     for (const [id, el] of tagEntries()) {
       const v = getDroneVec(id)
       if (!v) continue
       tmp.set(v.x, v.y + TAG_ANCHOR_Y, v.z).project(camera)
-      if (tmp.z > 1 || tmp.z < -1) {
+      if (!showTags || tmp.z > 1 || tmp.z < -1) {
         el.style.visibility = 'hidden'
         continue
       }
-      el.style.visibility = ''
       let m = sizes.get(el)
       if (!m && el.offsetWidth > 0) {
         m = { w: el.offsetWidth, h: el.offsetHeight }
         sizes.set(el, m)
       }
-      items.push({
-        el,
+      const w = m?.w ?? 180
+      const h = m?.h ?? 26
+      els.set(id, { el, w, h })
+      cands.push({
+        id,
+        status: (el.dataset.status as TagCandidate['status']) ?? 'idle',
+        sub: el.classList.contains('fx-tag--sub'),
+        depth: tmp.z,
         x: (tmp.x * 0.5 + 0.5) * size.width,
         y: (-tmp.y * 0.5 + 0.5) * size.height,
-        w: m?.w ?? 180,
-        h: m?.h ?? 26
+        w,
+        h
       })
     }
-    items.sort((a, b) => a.y - b.y)
-    const placed: Box[] = []
-    for (const it of items) {
-      let y = it.y
-      for (let tries = 0; tries < 8; tries++) {
-        const box: Box = { l: it.x - it.w / 2, r: it.x + it.w / 2, t: y - it.h / 2, b: y + it.h / 2 }
-        const hit = placed.find((p) => box.l < p.r && box.r > p.l && box.t < p.b && box.b > p.t)
-        if (!hit) {
-          placed.push(box)
-          break
-        }
-        y = hit.b + TAG_GAP + it.h / 2
+    const shown = selectTags(cands)
+    const visible = cands.filter((c) => shown.has(c.id))
+    const offsets = stackTags(visible, TAG_GAP)
+    for (const [id, { el }] of els) {
+      if (!shown.has(id)) {
+        el.style.visibility = 'hidden'
+        continue
       }
-      const dy = Math.round(y - it.y)
-      it.el.style.translate = dy === 0 ? '' : `0px ${dy}px`
+      el.style.visibility = ''
+      const dy = offsets.get(id) ?? 0
+      el.style.translate = dy === 0 ? '' : `0px ${dy}px`
+      const cand = visible.find((c) => c.id === id)
+      const lead = cand ? Math.max(0, Math.abs(dy) - cand.h / 2) : 0
+      if (lead > 0) {
+        el.dataset.lead = dy > 0 ? 'up' : 'down'
+        el.style.setProperty('--lead', `${Math.round(lead)}px`)
+      } else {
+        delete el.dataset.lead
+        el.style.removeProperty('--lead')
+      }
     }
   })
   return null
 }
-

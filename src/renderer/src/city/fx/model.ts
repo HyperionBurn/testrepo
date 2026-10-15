@@ -8,9 +8,10 @@ export const MAX_SITES = 12         // concurrent construction sites; beyond thi
 export const SITE_CONES_MIN = 4
 export const SITE_CONES_MAX = 8
 export const FENCE_MAX = 12
-export const MAX_POPUPS = 12        // live cost/token popups
-export const POPUP_LIFE_S = 1.4
-export const POPUP_GAP_S = 0.6      // minimum time between popups for one agent
+export const MAX_POPUPS = 12        // pooled popup elements (most are idle at any time)
+export const MAX_VISIBLE_POPUPS = 3 // most popups on screen at once; a new one retires the oldest
+export const POPUP_LIFE_S = 1.2
+export const POPUP_MERGE_S = 2      // one merged popup per agent per window: cost and tokens share one line
 export const POPUP_MIN_COST = 0.001 // USD increase that earns a cost popup
 export const POPUP_MIN_TOKENS = 50  // token increase that earns a token popup
 
@@ -139,6 +140,38 @@ export function burstCount(lines: number | undefined): number {
 
 export function popupText(kind: 'cost' | 'tok', delta: number): string {
   return kind === 'cost' ? `+${formatCost(delta)}` : `+${formatTokens(delta)}`
+}
+
+/** One popup line for a merged window: '+$0.01 · 1.5k tok', or only the part that moved. Empty when neither did. */
+export function popupLine(cost: number, tokens: number): string {
+  const c = cost >= POPUP_MIN_COST ? formatCost(cost) : ''
+  const t = tokens >= POPUP_MIN_TOKENS ? formatTokens(tokens) : ''
+  if (c && t) return `+${c} · ${t}`
+  return c || t ? `+${c || t}` : ''
+}
+
+/** Whether an agent's pending spend earns a popup now: the merge window has passed and something is pending. */
+export function popupDue(t: number, lastPop: number, pendCost: number, pendTokens: number): boolean {
+  return t - lastPop >= POPUP_MERGE_S && (pendCost >= POPUP_MIN_COST || pendTokens >= POPUP_MIN_TOKENS)
+}
+
+/** Popup opacity by life fraction u (0 = new, 1 = gone): full for the first 60 percent, then a quick fade out. */
+export function popupAlpha(u: number): number {
+  if (u <= 0.6) return 1
+  return clamp((1 - u) / 0.4, 0, 1)
+}
+
+/** Which live popup to retire when a new one would exceed MAX_VISIBLE_POPUPS: the oldest. -1 when under the cap. */
+export function popupToRetire(slots: readonly PopupSlotLike[], cap = MAX_VISIBLE_POPUPS): number {
+  let live = 0
+  let oldest = -1
+  for (let i = 0; i < slots.length; i++) {
+    const s = slots[i]
+    if (!s?.active) continue
+    live++
+    if (oldest < 0 || s.age > (slots[oldest]?.age ?? -1)) oldest = i
+  }
+  return live >= cap ? oldest : -1
 }
 
 // ---------------------------------------------------------------------------------------------

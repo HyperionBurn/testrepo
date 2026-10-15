@@ -1,11 +1,13 @@
-// Floating cost and token popups ("+$0.03", "+1.2k tok") that rise from a drone when its totals grow.
-// A fixed pool of MAX_POPUPS slots, each a drei Html element that is moved and restyled imperatively each frame,
-// so the pool costs no draw calls and no React renders.
+// Floating cost and token popups ("+$0.01 · 1.5k tok") that rise from a drone when its spend grows. One merged line
+// per agent per POPUP_MERGE_S window (Drones.tsx), at most MAX_VISIBLE_POPUPS on screen (the oldest yields), each
+// fading quickly. A fixed pool of drei Html elements, moved and restyled imperatively each frame: no draw calls and no
+// React renders. A shot hides them unless it asked for tags.
 import { useEffect, useState } from 'react'
 import { Html } from '@react-three/drei'
 import type { Object3D } from 'three'
 import { fxCtx, onFx, registerCounter, registerFx, type FxEvent, type FxSystem } from './fx/core'
-import { MAX_POPUPS, POPUP_LIFE_S, pickPopupSlot } from './fx/model'
+import { MAX_POPUPS, MAX_VISIBLE_POPUPS, POPUP_LIFE_S, pickPopupSlot, popupAlpha, popupToRetire } from './fx/model'
+import { shotLayers } from './capture'
 
 interface Slot {
   active: boolean
@@ -57,6 +59,14 @@ export class PopupSystem implements FxSystem {
 
   private onEvent(e: FxEvent): void {
     if (e.type !== 'popup' || fxCtx.reduced) return
+    const retire = popupToRetire(this.slots, MAX_VISIBLE_POPUPS)
+    if (retire >= 0) {
+      const old = this.slots[retire]
+      if (old) {
+        old.active = false
+        if (old.group) old.group.visible = false
+      }
+    }
     const i = pickPopupSlot(this.slots)
     const s = this.slots[i]
     if (!s) return
@@ -82,9 +92,10 @@ export class PopupSystem implements FxSystem {
         continue
       }
       const u = s.age / POPUP_LIFE_S
+      const show = shotLayers().tags
       if (s.group) {
-        s.group.visible = true
-        s.group.position.set(s.x, s.y + s.age * 1.5, s.z)
+        s.group.visible = show
+        s.group.position.set(s.x, s.y + s.age * 1.1, s.z)
       }
       const el = s.el
       if (el) {
@@ -93,8 +104,8 @@ export class PopupSystem implements FxSystem {
           el.style.color = s.color
           s.shown = s.text
         }
-        el.style.opacity = String(Math.max(0, 1 - u * u).toFixed(3))
-        el.style.transform = `scale(${(1 + 0.25 * (1 - u)).toFixed(3)})`
+        el.style.opacity = show ? popupAlpha(u).toFixed(3) : '0'
+        el.style.transform = `scale(${(1 + 0.12 * (1 - u)).toFixed(3)})`
       }
     }
   }
