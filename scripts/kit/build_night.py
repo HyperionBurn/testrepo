@@ -261,6 +261,9 @@ def sheet(glb, out_dir):
 # ---------------------------------------------------------------- night
 
 # Atlas boxes (x0,y0,x1,y1) of the four roof photographs, measured from islands-sheet.png.
+# A pane's lit rectangle is its blob's bounding box inset by this fraction on every side (keeps off the frames).
+PANE_INSET = 0.15
+
 ROOF_PHOTO_BOXES = [(373, 43, 494, 250), (143, 44, 272, 255), (45, 57, 111, 252), (279, 52, 361, 257)]
 
 
@@ -276,7 +279,7 @@ def component_stats(labels, count):
     bw = np.maximum(0, x1 - x0 + 1)
     bh = np.maximum(0, y1 - y0 + 1)
     fill = area / np.maximum(1, bw * bh)
-    return {'area': area, 'bw': bw, 'bh': bh, 'fill': fill}
+    return {'area': area, 'bw': bw, 'bh': bh, 'fill': fill, 'x0': x0, 'y0': y0}
 
 
 def box_mean(a, r):
@@ -356,31 +359,41 @@ def night(glb, out_dir, debug_dir=None):
         st = component_stats(labels, count)
     good = (st['area'] >= 12) & (st['bw'] >= 3) & (st['bh'] >= 3) & (st['fill'] >= 0.35) & (st['bw'] <= 60) & (st['bh'] <= 60)
     good[0] = False
-    keep = np.isin(labels, np.flatnonzero(good)) & (labels > 0)
-    # 1-px inset so panes never bleed into their frames: a pixel survives only if its 4 neighbours share its pane
-    inset = keep.copy()
-    lp = np.pad(labels, 1)
-    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-        nb = lp[1 + dy: 1 + dy + labels.shape[0], 1 + dx: 1 + dx + labels.shape[1]]
-        inset &= nb == labels
-    panes = np.where(inset, labels, 0)
+
+    # 4b. each good blob becomes ONE SOLID RECTANGLE: its bounding box inset by PANE_INSET on every side and clipped
+    #     to the facade. The raw blob is often a dark ring (the frame shadow) or a fragment, so lighting its own
+    #     pixels lit the frames and bit holes in the windows. The rectangle sits inside the frame.
+    panes = np.zeros(labels.shape, dtype=np.int32)
+    n_all = count + 1
+    rcx = np.zeros(n_all); rcy = np.zeros(n_all); rhw = np.ones(n_all); rhh = np.ones(n_all)
+    for lab in np.flatnonzero(good):
+        x0, y0, bw_, bh_ = int(st['x0'][lab]), int(st['y0'][lab]), int(st['bw'][lab]), int(st['bh'][lab])
+        dx, dy = round(PANE_INSET * bw_), round(PANE_INSET * bh_)
+        ax0, ax1 = x0 + dx, x0 + bw_ - dx
+        ay0, ay1 = y0 + dy, y0 + bh_ - dy
+        if ax1 - ax0 < 2 or ay1 - ay0 < 2:
+            continue
+        sub = panes[ay0:ay1, ax0:ax1]
+        sub[facade_eroded[ay0:ay1, ax0:ax1]] = lab
+        rcx[lab] = (ax0 + ax1 - 1) / 2
+        rcy[lab] = (ay0 + ay1 - 1) / 2
+        rhw[lab] = max(1.0, (ax1 - ax0 - 1) / 2)
+        rhh[lab] = max(1.0, (ay1 - ay0 - 1) / 2)
+    pm = panes > 0
     count = int(labels.max())
 
     # 5. per-pane colour and lit rank. Rank is shared by a floor of one tile, so lit floors cluster like real offices.
     tile_labels, tile_count = label_components(facade_eroded)
     n = count + 1
-    pane_ids = np.arange(n)
-    floor_key = {}
     tile_of = np.zeros(n, dtype=np.int64)
-    cy = np.zeros(n); cnt = np.bincount(panes[inset], minlength=n) + 0
-    np.add.at(cy, panes[inset], np.nonzero(inset)[0])
+    cnt = np.bincount(panes[pm], minlength=n)
+    cy = np.zeros(n); cxs = np.zeros(n)
+    np.add.at(cy, panes[pm], np.nonzero(pm)[0])
+    np.add.at(cxs, panes[pm], np.nonzero(pm)[1])
     cy = cy / np.maximum(1, cnt)
-    cxs = np.zeros(n)
-    np.add.at(cxs, panes[inset], np.nonzero(inset)[1])
     cxs = cxs / np.maximum(1, cnt)
     for pid in np.flatnonzero(cnt):
-        t = tile_labels[int(cy[pid]), int(cxs[pid])]
-        tile_of[pid] = t
+        tile_of[pid] = tile_labels[int(cy[pid]), int(cxs[pid])]
     floor_rank = {}
     rank = np.zeros(n)
     colour = np.zeros((n, 3))
@@ -403,18 +416,23 @@ def night(glb, out_dir, debug_dir=None):
         colour[pid] = c * bright
     colour = np.clip(colour, 0, 1)
 
+    # Soft interior: each solid pane is a touch brighter at its centre and falls off toward its edges (0.8 .. 1.0).
+    ys_p, xs_p = np.nonzero(pm)
+    lab_p = panes[ys_p, xs_p]
+    uu = np.abs(xs_p - rcx[lab_p]) / rhw[lab_p]
+    vv = np.abs(ys_p - rcy[lab_p]) / rhh[lab_p]
+    shade = 1.0 - 0.2 * np.clip((uu + vv) / 2.0, 0.0, 1.0)
     emis = np.zeros(labels.shape + (4,), dtype=np.uint8)
-    pm = panes > 0
-    emis[pm, :3] = (colour[panes[pm]] * 255).round().astype(np.uint8)
-    emis[pm, 3] = (rank[panes[pm]] * 255).round().astype(np.uint8)
+    emis[ys_p, xs_p, :3] = np.clip(colour[lab_p] * shade[:, None] * 255.0, 0, 255).round().astype(np.uint8)
+    emis[ys_p, xs_p, 3] = (rank[lab_p] * 255).round().astype(np.uint8)
     Image.fromarray(emis, 'RGBA').save(os.path.join(out_dir, 'kit-emissive.png'), optimize=True)
 
     # 6. night albedo: walls dimmed to city-ambient levels, cooled and desaturated; glass dark with a faint reflection
     cool = np.array([0.86, 0.92, 1.03])
     wall_lum = (0.3 * rgb[..., 0] + 0.59 * rgb[..., 1] + 0.11 * rgb[..., 2])[..., None]
-    night_rgb = (wall_lum * 0.45 + rgb * 0.55) * 0.26 * cool
+    night_rgb = (wall_lum * 0.45 + rgb * 0.55) * 0.16 * cool
     glass_out = (L[..., None] * 0.13) * np.array([0.78, 0.90, 1.05])
-    is_glass = (panes > 0)
+    is_glass = glass
     night_rgb[is_glass] = glass_out[is_glass] + rgb[is_glass] * 0.05
     night_img = Image.fromarray(np.clip(night_rgb, 0, 255).astype(np.uint8))
     night_img.save(os.path.join(out_dir, 'kit-albedo-night.jpg'), quality=92, optimize=True)
