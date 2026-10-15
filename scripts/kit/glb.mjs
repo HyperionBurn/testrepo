@@ -94,18 +94,6 @@ export function worldMatrices(json) {
   return world
 }
 
-export function mat3NormalOf(m) {
-  // inverse-transpose of the upper 3x3 (for transforming normals); returns column-major 3x3
-  const a = m
-  const det = a[0] * (a[5] * a[10] - a[9] * a[6]) - a[4] * (a[1] * a[10] - a[9] * a[2]) + a[8] * (a[1] * a[6] - a[5] * a[2])
-  const inv = [
-    (a[5] * a[10] - a[9] * a[6]) / det, (a[8] * a[6] - a[4] * a[10]) / det, (a[4] * a[9] - a[8] * a[5]) / det,
-    (a[9] * a[2] - a[1] * a[10]) / det, (a[0] * a[10] - a[8] * a[2]) / det, (a[8] * a[1] - a[0] * a[9]) / det,
-    (a[1] * a[6] - a[5] * a[2]) / det, (a[4] * a[2] - a[0] * a[6]) / det, (a[0] * a[5] - a[4] * a[1]) / det
-  ]
-  return inv // column-major inverse; transpose applied by caller via index order
-}
-
 export function determinant3(m) {
   return m[0] * (m[5] * m[10] - m[9] * m[6]) - m[4] * (m[1] * m[10] - m[9] * m[2]) + m[8] * (m[1] * m[6] - m[5] * m[2])
 }

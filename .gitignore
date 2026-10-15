@@ -4,3 +4,5 @@ release
 dist-artifacts
 .DS_Store
 *.log
+__pycache__/
+*.pyc

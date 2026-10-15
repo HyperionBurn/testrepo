@@ -106,13 +106,14 @@ describe('kit material', () => {
     const shader = {
       uniforms: {} as Record<string, unknown>,
       vertexShader: '#include <common>\n#include <begin_vertex>\n',
-      fragmentShader: '#include <common>\n#include <map_fragment>\n#include <emissivemap_fragment>\n'
+      fragmentShader: '#include <common>\n#include <map_fragment>\n#include <roughnessmap_fragment>\n#include <metalnessmap_fragment>\n#include <emissivemap_fragment>\n'
     }
     mat.onBeforeCompile(shader as never, null as never)
     expect(shader.fragmentShader).toContain('kitAlbedoNight')
     expect(shader.fragmentShader).toContain('kitEmissive')
     expect(shader.fragmentShader).toContain('uEmissiveGain')
     expect(shader.fragmentShader).not.toContain('#include <emissivemap_fragment>')
+    expect(shader.fragmentShader).toContain('metalnessFactor *=')
     expect(shader.vertexShader).toContain('attribute float aLit')
     expect(Object.keys(shader.uniforms)).toEqual(expect.arrayContaining(['uNight', 'uLit', 'uTime']))
     expect(KIT_EMISSIVE_GLSL).toContain('step( kitEm.a, vKitLit )')

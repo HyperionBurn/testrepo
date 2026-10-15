@@ -3,7 +3,9 @@
 import {
   DoubleSide, InstancedBufferAttribute, MeshStandardMaterial, type BufferGeometry, type Texture, type WebGLProgramParametersWithUniforms
 } from 'three'
-import { KIT_ATTRIBUTES_GLSL, KIT_EMISSIVE_GLSL, KIT_MAP_GLSL, KIT_UNIFORMS_GLSL, KIT_VERTEX_MAIN_GLSL } from './kitGlsl'
+import {
+  KIT_ATTRIBUTES_GLSL, KIT_EMISSIVE_GLSL, KIT_MAP_GLSL, KIT_METALNESS_GLSL, KIT_ROUGHNESS_GLSL, KIT_UNIFORMS_GLSL, KIT_VERTEX_MAIN_GLSL
+} from './kitGlsl'
 import type { KitTextures } from './loader'
 
 /** glTF metallic/roughness factors of the source material (the maps carry the per-texel values). */
@@ -49,6 +51,8 @@ export function createKitMaterial(opts: KitMaterialOptions): MeshStandardMateria
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${KIT_UNIFORMS_GLSL}${KIT_ATTRIBUTES_GLSL}`)
       .replace('#include <map_fragment>', KIT_MAP_GLSL)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\n${KIT_ROUGHNESS_GLSL}`)
+      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>\n${KIT_METALNESS_GLSL}`)
       .replace('#include <emissivemap_fragment>', KIT_EMISSIVE_GLSL)
   }
   return mat

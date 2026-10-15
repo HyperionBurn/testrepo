@@ -63,3 +63,14 @@ export const KIT_EMISSIVE_GLSL = `
   totalEmissiveRadiance = kitEm.rgb * kitOn * uEmissiveGain * uNight;
 }
 `
+
+/**
+ * Night metal/rough: the source's mullions are metallic and glossy, so at night they catch the scene's environment
+ * as bright rims around every pane. At night metalness drops and roughness rises (day is unchanged).
+ */
+export const KIT_METALNESS_GLSL = `
+metalnessFactor *= mix( 1.0, 0.3, uNight );
+`
+export const KIT_ROUGHNESS_GLSL = `
+roughnessFactor = mix( roughnessFactor, 1.0, 0.6 * uNight );
+`

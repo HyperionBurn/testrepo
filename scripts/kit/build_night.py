@@ -12,7 +12,6 @@ Everything is read straight from the GLB (JSON + BIN chunks), so the outputs alw
 """
 import io
 import json
-import math
 import os
 import random
 import struct
@@ -86,29 +85,6 @@ def prims_of(js, binc, mesh_index):
             idx = np.arange(read_accessor(js, binc, attrs['POSITION']).shape[0], dtype=np.int64)
         out.append({'tris': idx.reshape(-1, 3), 'uv': uv, 'normal': nrm, 'material': prim.get('material', -1)})
     return out
-
-
-def facade_triangles(prims):
-    """UV triangles whose normal is (nearly) horizontal: walls. Roofs (normal up) are excluded here."""
-    tris_uv = []
-    for p in prims:
-        if p['uv'] is None or p['normal'] is None:
-            continue
-        ny = p['normal'][:, 1]
-        for t in p['tris']:
-            n_y = ny[t].mean()
-            if abs(n_y) < 0.5:
-                tris_uv.append(p['uv'][t] * ATLAS_SIZE)
-    return tris_uv
-
-
-def uv_region(prims):
-    """Pixel-space bounding box (x0,y0),(x1,y1) of the primitives' UVs on the 1024 atlas."""
-    pts = [p['uv'][t] for p in prims if p['uv'] is not None for t in p['tris']]
-    if not pts:
-        return None
-    a = np.concatenate([q.reshape(-1, 2) for q in pts])
-    return a.min(axis=0) * ATLAS_SIZE, a.max(axis=0) * ATLAS_SIZE
 
 
 # ---------------------------------------------------------------- atlas geometry

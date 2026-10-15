@@ -1,8 +1,8 @@
 // Loads the city kit: the GLB (Low-poly City Buildings, CC-BY-4.0, smooth998) baked into one geometry per building,
 // plus the textures this package derives from its atlas (see scripts/kit/build_night.py).
 import {
-  BufferGeometry, Group, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, NoColorSpace, SRGBColorSpace,
-  Material, Texture, TextureLoader, type Object3D
+  BufferGeometry, LinearFilter, LinearMipmapLinearFilter, Matrix4, Mesh, NoColorSpace, SRGBColorSpace,
+  Texture, TextureLoader, type Object3D
 } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import glbUrl from './models/city-kit.glb?url'
@@ -157,16 +157,4 @@ export function loadKit(): Promise<KitData> {
     kit.catch(() => { kit = null })
   }
   return kit
-}
-
-/** A group with one Mesh per building, all sharing `material` (previews and tests). */
-export function kitGroup(data: KitData, material: Material, name = 'skyline-kit'): Group {
-  const group = new Group()
-  group.name = name
-  for (const { geometry, def } of data.buildings.values()) {
-    const mesh = new Mesh(geometry, material)
-    mesh.name = def.id
-    group.add(mesh)
-  }
-  return group
 }
