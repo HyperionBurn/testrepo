@@ -1,4 +1,4 @@
-import { LinearMipmapLinearFilter, Texture, TextureLoader, SRGBColorSpace, NoColorSpace } from 'three'
+import { LinearFilter, LinearMipmapLinearFilter, NoColorSpace, SRGBColorSpace, Texture, TextureLoader } from 'three'
 import albedoUrl from './textures/facade-albedo.jpg?url'
 import emissiveUrl from './textures/facade-emissive.png?url'
 import normalUrl from './textures/facade-normal.jpg?url'
@@ -12,7 +12,7 @@ function prepare(tex: Texture, space: string, maxAnisotropy: number): Texture {
   tex.flipY = true
   tex.generateMipmaps = true
   tex.minFilter = LinearMipmapLinearFilter
-  tex.magFilter = 'linear' as unknown as Texture['magFilter']
+  tex.magFilter = LinearFilter
   tex.anisotropy = Math.max(1, Math.min(16, maxAnisotropy))
   tex.needsUpdate = true
   return tex

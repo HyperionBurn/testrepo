@@ -179,9 +179,9 @@
         0.313
       ],
       "farEmissive": [
-        0.1369,
-        0.1069,
-        0.063
+        0.0396,
+        0.0309,
+        0.0182
       ],
       "notes": "Dark tinted curtain wall, black mullions."
     },
@@ -222,9 +222,9 @@
         0.4909
       ],
       "farEmissive": [
-        0.099,
-        0.0772,
-        0.0456
+        0.0576,
+        0.045,
+        0.0265
       ],
       "notes": "Blue-grey glass panels, light mullions."
     },

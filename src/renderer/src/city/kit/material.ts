@@ -33,9 +33,9 @@ export function createKitMaterial(opts: KitMaterialOptions): MeshStandardMateria
     kitAlbedoNight: { value: null },
     kitEmissive: { value: null },
     uNight: { value: 0 },
-    uLit: { value: 0.35 },
+    uLit: { value: 0.28 },
     uTime: { value: 0 },
-    uEmissiveGain: { value: 2.2 }
+    uEmissiveGain: { value: 1.6 }
   }
   const mat = new MeshStandardMaterial({ side: DoubleSide, roughness: ROUGHNESS, metalness: METALNESS })
   mat.defines = opts.instanced ? { KIT_INSTANCED: '' } : {}
@@ -102,7 +102,7 @@ export function kitInstanceAttributes(count: number, seed = 1): {
   const sd = new Float32Array(count)
   const tint = new Float32Array(count * 3).fill(1)
   for (let i = 0; i < count; i++) {
-    lit[i] = 0.35
+    lit[i] = 0.28
     sd[i] = rnd()
   }
   return {

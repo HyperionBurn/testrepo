@@ -414,15 +414,15 @@ def night(glb, out_dir, debug_dir=None):
             floor_rank[key] = rng.random()
         rank[pid] = 0.55 * floor_rank[key] + 0.45 * rng.random()
         u = rng.random()
-        bright = 0.5 + 0.5 * rng.random()
-        if u < 0.70:  # warm incandescent / LED office, 2700-3200 K
-            kelvin = 2700 + 500 * rng.random()
-            c = np.array([1.0, 0.62 + 0.14 * (kelvin - 2700) / 500, 0.30 + 0.25 * (kelvin - 2700) / 500])
-        elif u < 0.92:  # cool white, 4000-5000 K
-            c = np.array([0.92, 0.96, 1.0])
+        bright = 0.45 + 0.5 * rng.random()
+        if u < 0.72:  # warm office light, about 3000-3500 K
+            t = rng.random()
+            c = np.array([1.0, 0.82 + 0.04 * t, 0.60 + 0.08 * t])
+        elif u < 0.94:  # cool white, 4000-5000 K
+            c = np.array([0.93, 0.96, 1.0])
         elif u < 0.97:  # TV / monitor blue
             c = np.array([0.45, 0.62, 1.0])
-        else:  # rare neutral daylight-ish
+        else:  # rare daylight-neutral
             c = np.array([1.0, 0.97, 0.93])
         colour[pid] = c * bright
     colour = np.clip(colour, 0, 1)
@@ -436,7 +436,7 @@ def night(glb, out_dir, debug_dir=None):
     # 6. night albedo: walls dimmed to city-ambient levels, cooled and desaturated; glass dark with a faint reflection
     cool = np.array([0.86, 0.92, 1.03])
     wall_lum = (0.3 * rgb[..., 0] + 0.59 * rgb[..., 1] + 0.11 * rgb[..., 2])[..., None]
-    night_rgb = (wall_lum * 0.45 + rgb * 0.55) * 0.36 * cool
+    night_rgb = (wall_lum * 0.45 + rgb * 0.55) * 0.26 * cool
     glass_out = (L[..., None] * 0.13) * np.array([0.78, 0.90, 1.05])
     is_glass = (panes > 0)
     night_rgb[is_glass] = glass_out[is_glass] + rgb[is_glass] * 0.05

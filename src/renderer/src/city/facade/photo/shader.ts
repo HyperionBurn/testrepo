@@ -122,8 +122,9 @@ void photoSample() {
   float band = (1.0 - smoothstep(4.2, 4.6, vFUV.y)) * (1.0 - roof);
   float bayPhase = abs(fract(vFUV.x / bayW) - 0.5);
   float glassy = 1.0 - smoothstep(0.30, 0.42, bayPhase);
+  // Shopfront band: a dim warm glow behind the glass, not a light strip (emissive gain applies on top).
   emitted = mix(emitted, vec3(1.0, 0.70, 0.40) * uPhotoShopGain * (0.55 + 0.45 * glassy), band);
-  alb = mix(alb, alb * 0.6, band);
+  alb = mix(alb, alb * 0.35, band);
   alb = mix(alb, uPhotoRoofColor, roof);
   emitted *= (1.0 - roof);
 

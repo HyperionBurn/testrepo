@@ -48,7 +48,7 @@ async function show(mode: 'day' | 'night'): Promise<number> {
   const mat = createKitMaterial({ instanced: false })
   applyKitTextures(mat, kit.textures)
   setKitNight(mat, mode === 'night' ? 1 : 0)
-  setKitLit(mat, 0.4)
+  setKitLit(mat, 0.28)
   setKitTime(mat, performance.now() / 1000)
 
   const root = new Group()

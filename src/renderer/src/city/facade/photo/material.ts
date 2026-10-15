@@ -20,8 +20,8 @@ export interface PhotoLighting {
 
 export const DEFAULT_PHOTO_LIGHTING: Readonly<Omit<PhotoLighting, 'ambientTint' | 'roofColor'>> = {
   ambient: 0.35,
-  emissiveGain: 1.4,
-  shopGain: 0.9,
+  emissiveGain: 2.0,
+  shopGain: 0.12,
   normalScale: 1.0,
 }
 

@@ -83,7 +83,7 @@ SETS: list[SetSpec] = [
     SetSpec('stone-019', 'Facade019', 'triplet', 'stone', (0, 0, 1024, 1024), 6, 6, wb=True, thr=0.10, seed=13,
             notes='Grey stone piers and spandrels, 1980s office.'),
     SetSpec('glass-001', 'Facade001', 'glass', 'glass', (0, 0, 1024, 1024), 10, 16, wb=True, seed=21,
-            pane_lo=0.20, pane_hi=0.9, lit_frac=0.25, notes='Dark tinted curtain wall, black mullions.'),
+            pane_lo=0.20, pane_hi=0.9, lit_frac=0.15, notes='Dark tinted curtain wall, black mullions.'),
     SetSpec('glass-006', 'Facade006', 'glass', 'glass', (0, 0, 1024, 1024), 8, 14, wb=True, seed=22,
             pane_lo=0.0, pane_hi=0.66, lit_frac=0.30, notes='Blue-grey glass panels, light mullions.'),
     SetSpec('night-007', 'Facade007', 'night', 'office-night', (0, 0, 512, 512), 12, 12, thr=0.22, seed=31,
@@ -269,7 +269,9 @@ def process(spec: SetSpec, src_dir: str, debug: Optional[str]) -> Result:
         # warm interior light on a seeded share of the panes
         lit_pane = pane_kept & (blobs_rank < spec.lit_frac)
         warm = np.array([1.0, 0.78, 0.46], np.float32)
-        emissive = np.where(lit_pane[..., None], warm[None, None, :] * 0.6, 0.0)
+        # brightness varies per pane (0.2..0.5) so the lit panes do not read as flat colour blocks
+        strength = (0.2 + 0.3 * (blobs_rank / max(spec.lit_frac, 1e-3)))[..., None]
+        emissive = np.where(lit_pane[..., None], warm[None, None, :] * strength, 0.0)
         rank = np.where(pane_kept, blobs_rank, 1.0).astype(np.float32)
         albedo = P
         extra = {'pane_blobs': n}
