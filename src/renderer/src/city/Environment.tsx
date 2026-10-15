@@ -4,7 +4,7 @@
 import { useEffect } from 'react'
 import { useThree } from '@react-three/fiber'
 import { PMREMGenerator, type Texture, type WebGLRenderer } from 'three'
-import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js'
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js'
 import { useSky } from '../state/store'
 import type { TimeOfDay } from './skyPresets'
 import blueHdr from './env/kloppenheim_02_1k.hdr?url'
@@ -30,7 +30,7 @@ const cache = new Map<string, Promise<Texture>>()
 function loadEnv(url: string, renderer: WebGLRenderer): Promise<Texture> {
   let p = cache.get(url)
   if (!p) {
-    p = new RGBELoader()
+    p = new HDRLoader()
       .loadAsync(url)
       .then((tex) => {
         const pmrem = new PMREMGenerator(renderer)

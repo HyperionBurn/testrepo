@@ -33,6 +33,8 @@ import { serviceGrab } from './capture'
 // Registers window.__skylineDemo (demo repo and fake agents) for screenshots and manual testing.
 import './dev/fixture'
 import './assets/debug'
+// Registers window.__skylineKitPreview('day' | 'night' | 'off') for the city kit (real photographed towers).
+import './kit/preview'
 
 const NO_DISTRICTS: CityDistrict[] = []
 

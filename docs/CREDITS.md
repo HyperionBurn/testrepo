@@ -1,5 +1,16 @@
 # Credits
 
+## Photographic kit buildings (CC BY 4.0)
+
+The photographic city kit (`src/renderer/src/city/kit/`) is built from **Low-poly City Buildings** by **smooth998**, licensed under **CC BY 4.0** (https://creativecommons.org/licenses/by/4.0/).
+
+- Title: Low-poly City Buildings
+- Author: smooth998 (https://sketchfab.com/smooth998)
+- Source: https://sketchfab.com/3d-models/low-poly-city-buildings-e0209ac5bb684d2d85e5ade96c92d2ff
+- Changes: the GLB is unchanged. The facade atlas, ground photo and night-window maps are derived from its textures (see `scripts/kit/build_night.py`). Building styles and tiers are classified in `scripts/kit/inspect_kit.mjs`. Licence note: `src/renderer/src/city/kit/models/LICENSE.txt`.
+
+## Kenney models (CC0)
+
 Skyline's city models and textures come from Kenney's City Kit packs, released under **CC0 1.0 Universal** (public domain dedication). Attribution is not required; we give it anyway.
 
 - Website: https://kenney.nl
