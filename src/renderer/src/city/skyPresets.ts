@@ -1,12 +1,14 @@
 // Time-of-day presets for the sky, the haze and the scene light. Pure data and maths (no three.js), so the
 // interpolation can be tested. Sky.tsx turns a blended result into shared shader uniforms every frame.
 import { DAWN_LILAC, DAWN_PEACH, FOG_BLUE, FOG_DAWN, FOG_NIGHT, HAZE_WARM, HORIZON, HORIZON_PINK, MID_BLUE, NIGHT_BROWN, NIGHT_GLOW, NIGHT_ZENITH, TEAL_DUSK, ZENITH } from './palette'
+import type { TimeOfDay } from './lighting'
 
-export const TIMES_OF_DAY = ['blue', 'night', 'dawn'] as const
-export type TimeOfDay = (typeof TIMES_OF_DAY)[number]
-export const DEFAULT_TIME_OF_DAY: TimeOfDay = 'blue'
+export type { TimeOfDay } from './lighting'
+export const TIMES_OF_DAY = ['golden', 'blue', 'night', 'dawn'] as const satisfies readonly TimeOfDay[]
+export const DEFAULT_TIME_OF_DAY: TimeOfDay = 'golden'
 
 export const TIME_OF_DAY_LABEL: Record<TimeOfDay, string> = {
+  golden: 'Golden hour',
   blue: 'Blue hour',
   night: 'Night',
   dawn: 'Dawn'
@@ -35,6 +37,27 @@ export interface ResolvedPreset {
 }
 
 export const PRESETS: Record<TimeOfDay, SkyPreset> = {
+  // Golden hour (the default): warm hazy horizon, pale blue zenith. The sun disc and glow sit at lighting.sunDir.
+  golden: {
+    colors: {
+      zenith: '#8fb6d8',
+      mid: '#b4cde2',
+      teal: '#d2dde0',
+      horizon: '#f6c08a',
+      bandA: '#ffc896',
+      bandB: '#f2a377',
+      below: '#7a6a5e',
+      wisp: '#ffd3a0',
+      fog: '#e8c7a2',
+      haze: '#ffb070',
+      cloudLow: '#ffd0a0',
+      cloudHigh: '#f2b8a0',
+      hemiSky: '#8fb6d8',
+      hemiGround: '#6b5a48',
+      key: '#ffb36b'
+    },
+    levels: { star: 0, moon: 0, band: 0.6, wisps: 0.5, sheets: 0.6, hazeAmt: 0.8, scatter: 0.8, hemi: 0.5, keyI: 1 }
+  },
   // Blue hour, after the NYC dusk reference: deep navy zenith, teal mid-sky, orange to pink horizon band.
   blue: {
     colors: {

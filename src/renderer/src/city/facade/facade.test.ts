@@ -2,10 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { buildLayout } from '../../../../shared/layout'
 import { langFromPath } from '../../../../shared/lang'
 import type { CityLayout, FileNode, RepoSnapshot } from '../../../../shared/types'
-import { createBuildingMaterials } from '../buildingShader'
-import { facadePlacement, hashPath, LocRank, planFacades, type PickInput } from '../modelPicker'
+import { facadePlacement, hashPath, LocRank, planReal, type PickInput } from '../modelPicker'
 import { visHeight } from '../geom'
-import { buildTemplateMesh, TEMPLATES, templateById, templateTris, templatesWith } from './templates'
+import { buildMassingMesh, TEMPLATES, templateTris, templatesWith } from './templates'
 import { HeightRank, MID_MAX, MID_MIN, realHeight, SPIRE_MAX } from './skyline'
 
 /** Deterministic PRNG (mulberry32). */
@@ -46,7 +45,7 @@ describe('facade templates', () => {
 
   it('every template has the base at y = 0, reaches y = 1, and stays inside the unit footprint', () => {
     for (const t of TEMPLATES) {
-      const m = buildTemplateMesh(t)
+      const m = buildMassingMesh(t)
       let minY = Infinity
       let maxY = -Infinity
       for (let i = 0; i < m.position.length; i += 3) {
@@ -67,7 +66,7 @@ describe('facade templates', () => {
 
   it('every face is wound counter-clockwise seen from outside, along its stated normal', () => {
     for (const t of TEMPLATES) {
-      const m = buildTemplateMesh(t)
+      const m = buildMassingMesh(t)
       for (let i = 0; i < m.index.length; i += 3) {
         const a = m.index[i]!
         const b = m.index[i + 1]!
@@ -83,21 +82,11 @@ describe('facade templates', () => {
     }
   })
 
-  it('aFace carries the face id, the absolute coordinate in [0, 1], and the tier fractions', () => {
-    const m = buildTemplateMesh(templateById('deco-3')!)
-    for (let k = 0; k < m.aFace.length; k += 4) {
-      expect([0, 1, 2, 3, 4]).toContain(m.aFace[k])
-      expect(m.aFace[k + 1]).toBeGreaterThanOrEqual(0)
-      expect(m.aFace[k + 1]).toBeLessThanOrEqual(1)
-      expect(m.aFace[k + 2]).toBeLessThanOrEqual(m.aFace[k + 3]!)
-    }
-  })
-
   it('the triangle count matches the template budget', () => {
-    for (const t of TEMPLATES) expect(buildTemplateMesh(t).index.length / 3).toBe(templateTris(t))
+    for (const t of TEMPLATES) expect(buildMassingMesh(t).index.length / 3).toBe(templateTris(t))
   })
 
-  it('every placement tag has at least one template, and spires are a subset of towers with tops', () => {
+  it('every placement tag has at least one template', () => {
     for (const tag of ['spire', 'tower', 'mid', 'plate', 'complex'] as const) expect(templatesWith(tag).length).toBeGreaterThan(0)
   })
 })
@@ -107,7 +96,7 @@ describe('facade placement', () => {
   const layout = buildLayout(repo)
   const locOf = new Map(repo.files.map((f) => [f.path, f.loc]))
   const inputs = inputsOf(layout, locOf)
-  const plan = planFacades(inputs)
+  const plan = planReal(inputs).map((r) => r.massing)
   const heights = inputs.map((i) => i.h)
 
   it('most files are mid-rise (rendered heights between MID_MIN and MID_MAX), at least 70 %', () => {
@@ -115,7 +104,7 @@ describe('facade placement', () => {
     expect(mid / heights.length).toBeGreaterThanOrEqual(0.7)
   })
 
-  it('the top ~1.5 % by LOC are the supertall, spire-class files, and only those', () => {
+  it('the top ~1.5 % by LOC are the supertall, spire-class massings, and only those', () => {
     const rank = new LocRank(inputs.map((i) => i.loc))
     const top = inputs.filter((i) => rank.percentile(i.loc) >= 0.985).length
     const skyscrapers = plan.filter((p) => p.cls === 'skyscraper')
@@ -133,7 +122,7 @@ describe('facade placement', () => {
   })
 
   it('is deterministic: the same inputs give the same templates', () => {
-    const again = planFacades(inputs)
+    const again = planReal(inputs).map((r) => r.massing)
     expect(again.map((p) => p.modelId)).toEqual(plan.map((p) => p.modelId))
   })
 
@@ -189,46 +178,5 @@ describe('height model', () => {
     expect(r.percentile(4)).toBe(1)
     expect(r.percentile(10)).toBe(1)
     expect(new HeightRank([5]).percentile(5)).toBe(0)
-  })
-})
-
-describe('facade shader patch', () => {
-  const FRAGMENT = `#include <common>
-#include <color_fragment>
-#include <emissivemap_fragment>
-#include <fog_fragment>
-void main() {}`
-  const VERTEX = '#include <common>\n#include <begin_vertex>\n#include <project_vertex>\nvoid main() {}'
-
-  function patched(): { vertex: string; fragment: string } {
-    const { facade, tint, time } = createBuildingMaterials()
-    const shader = { uniforms: {} as Record<string, unknown>, vertexShader: VERTEX, fragmentShader: FRAGMENT }
-    facade.onBeforeCompile(shader as never, null as never)
-    expect(shader.uniforms.uTint).toBe(tint)
-    expect(shader.uniforms.uTime).toBe(time)
-    return { vertex: shader.vertexShader, fragment: shader.fragmentShader }
-  }
-
-  it('replaces every chunk it patches, and declares the facade inputs', () => {
-    const { vertex, fragment } = patched()
-    expect(vertex).toContain('attribute vec4 aFace')
-    expect(fragment.split('#include <emissivemap_fragment>').length - 1).toBe(0)
-    // The colour body starts with the original include (as the model body does), so exactly one remains.
-    expect(fragment.split('#include <color_fragment>').length - 1).toBe(1)
-    expect(fragment).toContain('uniform float uTint')
-    expect(fragment).toContain('totalEmissiveRadiance = emit;')
-  })
-
-  it('the fragment stage is balanced in braces and parentheses', () => {
-    const { fragment } = patched()
-    const count = (ch: string) => fragment.split(ch).length - 1
-    expect(count('{')).toBe(count('}'))
-    expect(count('(')).toBe(count(')'))
-  })
-
-  it('the window grid is anchored to world units through the footprint, so tiers share one phase', () => {
-    const { vertex } = patched()
-    expect(vertex).toMatch(/vU = aFace\.y \* mix\(aSize\.x, aSize\.z, isXF\);/)
-    expect(vertex).toMatch(/vY = position\.y \* aSize\.y;/)
   })
 })

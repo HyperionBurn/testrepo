@@ -70,9 +70,10 @@ function writeColorMode(m: ColorMode): void {
   }
 }
 
-const TIME_OF_DAY_KEY = 'skyline.timeOfDay'
+// v2: golden hour became the default. The key changed so that browsers which saved the old default (blue hour) start on golden.
+const TIME_OF_DAY_KEY = 'skyline.timeOfDay.v2'
 
-/** The saved time of day, or the default (blue hour). Storage can be unavailable; the choice is a convenience. */
+/** The saved time of day, or the default (golden hour). Storage can be unavailable; the choice is a convenience. */
 function readTimeOfDay(): TimeOfDay {
   try {
     const v = typeof window === 'undefined' ? null : window.localStorage.getItem(TIME_OF_DAY_KEY)
@@ -116,7 +117,7 @@ interface SkyState {
   requestFrame(): void; setCapture(m: CaptureMode | null): void; setCaptureDpr(d: number | null): void;
   setColorMode(m: ColorMode): void; cycleColorMode(): void;
   setBuildingStyle(s: BuildingStyle): void; toggleBuildingStyle(): void;
-  timeOfDay: TimeOfDay;                                  // sky preset: blue hour, night or dawn (persisted, key T)
+  timeOfDay: TimeOfDay;                                  // sky preset: golden hour (default), blue hour, night or dawn (persisted, key T)
   setTimeOfDay(t: TimeOfDay): void; cycleTimeOfDay(): void;
 }
 

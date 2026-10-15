@@ -114,7 +114,7 @@ export function TitleBar() {
       <button
         className="capsule capsule--ghost capsule--sm"
         onClick={() => useSky.getState().cycleTimeOfDay()}
-        title={`Sky: ${TIME_OF_DAY_LABEL[timeOfDay]}. Click or press T to cycle blue hour, night, dawn`}
+        title={`Sky: ${TIME_OF_DAY_LABEL[timeOfDay]}. Click or press T to cycle golden hour, blue hour, night, dawn`}
       >
         <span className="muted">{TIME_OF_DAY_LABEL[timeOfDay]}</span>
       </button>

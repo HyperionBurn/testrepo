@@ -1,6 +1,7 @@
 // The building field as a React component: rebuilds on layout change, steps the animation each frame, and turns
-// pointer events on instances into hover and select actions. Models load in the background; until they are in,
-// the field shows the procedural boxes, then crossfades to the models.
+// pointer events on instances into hover and select actions. The assets load in the background: the Kenney models (the
+// stylized style, over the procedural boxes), and for the real style the photographic facade atlas and the kit towers.
+// Until they are in, the buildings show their boxes or their massing, then crossfade.
 import { useEffect, useMemo, useReducer, useRef } from 'react'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Color, type Texture } from 'three'
@@ -12,6 +13,9 @@ import { isClick } from './registry'
 import { loadModels, type LoadedModel } from './assets'
 import { locByPath } from './modelPicker'
 import { throttle } from './picking'
+import { loadKit, applyKitTextures, type KitData } from './kit'
+import { loadFacadeAtlas } from './facade/photo/atlas'
+import { setFacadeAtlas } from './facade/photo/material'
 
 /** Hover updates reach the store at most this often (20 Hz). */
 const HOVER_MS = 50
@@ -35,6 +39,8 @@ declare global {
 
 /** Models already in memory, by id. Filled once: later fields start with them and skip the box fallback. */
 const loaded = new Map<string, LoadedModel>()
+/** The kit towers, once loaded (real style). Later fields start with them. */
+let kitReady: KitData | null = null
 
 /** Loads the given models and points the model material at the shared colormap. */
 async function loadAll(ids: string[], mats: BuildingMaterials): Promise<ReadonlyMap<string, LoadedModel>> {
@@ -79,7 +85,8 @@ export function Buildings() {
       firstSeen: s.firstSeen,
       colors: colorsRef.current,
       loc: locByPath(s.repo?.files ?? []),
-      models: loaded
+      models: loaded,
+      kit: kitReady
     })
   }, [layout, mats, style])
 
@@ -110,6 +117,39 @@ export function Buildings() {
       live = false
     }
   }, [field, mats])
+
+  // Real style: the facade atlas binds once it is in; the kit towers rise over their massing when they are in.
+  useEffect(() => {
+    let live = true
+    loadFacadeAtlas({ maxAnisotropy: gl.capabilities.getMaxAnisotropy() })
+      .then((atlas) => {
+        if (live) setFacadeAtlas(mats.facade, atlas)
+      })
+      .catch((err: unknown) => {
+        console.warn('facade atlas unavailable, keeping the massing in placeholder colours', err)
+      })
+    return () => {
+      live = false
+    }
+  }, [gl, mats])
+
+  useEffect(() => {
+    if (!field || field.hasKit || style !== 'real') return
+    let live = true
+    loadKit()
+      .then((kit) => {
+        if (!live) return
+        kitReady = kit
+        applyKitTextures(mats.kit, kit.textures)
+        field.adoptKit(kit)
+      })
+      .catch((err: unknown) => {
+        console.warn('city kit unavailable, keeping the massing', err)
+      })
+    return () => {
+      live = false
+    }
+  }, [field, mats, style])
 
   useEffect(() => {
     field?.retarget(mode, gitTs, firstSeen)

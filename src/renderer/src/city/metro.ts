@@ -9,6 +9,9 @@
 // are the blocks where a noise field runs high: green-dark ground with a few lamps. Light lines (avenues and streets)
 // run to the edge of the repo square, so they carry on from the repo's own streets.
 
+import { KIT_BUILDINGS, type KitBuilding } from './kit/kitManifest'
+import { facadeSetFor, METRO_TIERS } from './facade/massing'
+
 /**
  * Angle between the avenues and the repo city's z axis. Zero: the metropolis grid runs on the same axes as the repo
  * city's streets, so an avenue visibly carries on from the repo's own roads. Rotating a box by +GRID_ANGLE lines it up.
@@ -164,13 +167,18 @@ export interface LotHeight { h: number; spire: boolean; needle: boolean }
  * metropolis is core. About 1 % of core lots are slender needles of 20 to 32 units. The outer belt halves. Each lot
  * varies by +-25 %, so neighbours often differ.
  */
-export function lotHeight(x: number, z: number, cores: readonly Core[], seed: number, rnd: number): LotHeight {
+/** Downtown mask at (x, z), 0 to 1: the cores' gaussian blobs, thresholded so the cores are solid and the rest is not. */
+export function coreMask(x: number, z: number, cores: readonly Core[]): number {
   let sum = 0
   for (const c of cores) {
     const d2 = (x - c.x) * (x - c.x) + (z - c.z) * (z - c.z)
     sum += c.strength * Math.exp(-d2 / (2 * c.r * c.r))
   }
-  const mask = smooth(0.15, 0.6, sum)
+  return smooth(0.15, 0.6, sum)
+}
+
+export function lotHeight(x: number, z: number, cores: readonly Core[], seed: number, rnd: number): LotHeight {
+  const mask = coreMask(x, z, cores)
   const r = Math.hypot(x, z)
   // Distance-dependent scale: far towers look as small as near ones, so the repo spire stays the hero.
   const dScale = 1 + 3.5 * smooth(250, 1100, r)
@@ -209,9 +217,41 @@ export interface LotSet {
   rot: Uint8Array
   /** Per lot, 4 floats: lit share of windows, window pitch (0..1), wall palette (0..3), kind (0 plain, 1 office, 3 half-lit). */
   style: Float32Array
+  /** Per lot: index into FACADE_SETS, by height (the photographic facade of the lot). */
+  facade: Uint8Array
 }
 
 export interface MetroGroup { band: Band; massing: Massing; set: LotSet }
+
+/**
+ * A kit tower standing in a downtown core, at its real size (heightM and footprintM, 10 m per unit): one per lot picked
+ * from the core lots, so it replaces that lot's own box. Position is the lot centre; `rot` is a quarter turn.
+ */
+export interface Landmark {
+  kit: string
+  x: number
+  z: number
+  rot: number
+  /** Real footprint and height, world units. */
+  w: number
+  d: number
+  h: number
+  seed: number
+  /** Lit share of windows. */
+  lit: number
+}
+
+/** Share of core lots that become landmarks. */
+export const LANDMARK_SHARE = 0.03
+/** Core lots: core mask at or above this. */
+export const LANDMARK_CORE = 0.5
+/** The same kit tower never stands closer than this to another of its kind (centre to centre, world units). */
+export const LANDMARK_SPACING = 120
+/** The deco supertall (the 430 m tower) stands at most this many times in the whole metropolis. */
+export const LANDMARK_DECO_MAX = 2
+/** Kit towers that may stand as landmarks: the supertalls and the towers. */
+const KIT_BY_ID = new Map(KIT_BUILDINGS.map((k) => [k.id, k]))
+const LANDMARK_KITS: readonly KitBuilding[] = KIT_BUILDINGS.filter((k) => k.tier === 'supertall' || k.tier === 'tower')
 
 export interface ParkSet {
   count: number
@@ -241,6 +281,8 @@ export interface MetroPlan {
   /** Building groups, one per (band, massing). Each is one instanced draw. */
   groups: MetroGroup[]
   parks: ParkSet
+  /** Kit landmarks in the cores, in plan order. */
+  landmarks: Landmark[]
   lines: LineSet
   /** Total instanced buildings (all bands). */
   boxCount: number
@@ -420,6 +462,7 @@ function toSet(list: readonly Rec[]): LotSet {
   const seed = new Float32Array(n)
   const rot = new Uint8Array(n)
   const style = new Float32Array(n * 4)
+  const facade = new Uint8Array(n)
   list.forEach((r, q) => {
     pos[q * 3] = r.x
     pos[q * 3 + 2] = r.z
@@ -429,8 +472,29 @@ function toSet(list: readonly Rec[]): LotSet {
     seed[q] = r.seed
     rot[q] = r.rot
     style.set(r.style, q * 4)
+    facade[q] = facadeSetFor(r.h, r.seed, METRO_TIERS)
   })
-  return { count: n, pos, size, seed, rot, style }
+  return { count: n, pos, size, seed, rot, style, facade }
+}
+
+/** The landmark for a core lot, or null: the kit tower by hash, skipping a tower too close to its kind and a third deco. */
+function pickLandmark(c: Cand, seed: number, placed: readonly Landmark[], decoOk: boolean, ok: (b: Span) => boolean): Landmark | null {
+  const pool = LANDMARK_KITS
+  const start = Math.floor(hash3(c.i, c.j, c.key, seed ^ 0x62) * pool.length)
+  for (let t = 0; t < pool.length; t++) {
+    const k = pool[(start + t) % pool.length]!
+    if (k.id.startsWith('deco') && !decoOk) continue
+    if (placed.some((p) => p.kit === k.id && Math.hypot(p.x - c.x, p.z - c.z) < LANDMARK_SPACING)) continue
+    const rot = hash3(c.i, c.j, c.key, seed ^ 0x63) < 0.5 ? 0 : 1
+    const w = k.footprintM.w / 10
+    const d = k.footprintM.d / 10
+    if (!ok(footprintBox(c.x, c.z, w, d, rot))) continue
+    return {
+      kit: k.id, x: c.x, z: c.z, rot, w, d, h: k.heightM / 10,
+      seed: hash3(c.i, c.j, c.key, seed ^ 0x64), lit: 0.3 + 0.4 * hash3(c.i, c.j, c.key, seed ^ 0x65)
+    }
+  }
+  return null
 }
 
 export function buildMetro(opts: MetroOptions): MetroPlan {
@@ -459,11 +523,22 @@ export function buildMetro(opts: MetroOptions): MetroPlan {
   for (const [b, m] of GROUP_ORDER) lists.set(b + ':' + m, [])
   const parkRects: number[] = []
   const parkLights: number[] = []
+  const landmarks: Landmark[] = []
+  let decoCount = 0
   let kept = 0
   visitParcels(R, seed, ok, (c) => {
     if (kept >= maxLots) return
     const keep = c.r < MID_RADIUS ? keepNearMid : keepFar
     if (hash3(c.i, c.j, c.key, seed ^ 0x77) >= keep) return
+    if (coreMask(c.x, c.z, cores) >= LANDMARK_CORE && hash3(c.i, c.j, c.key, seed ^ 0x61) < LANDMARK_SHARE) {
+      const lm = pickLandmark(c, seed, landmarks, decoCount < LANDMARK_DECO_MAX, ok)
+      if (lm) {
+        if (lm.kit.startsWith('deco')) decoCount++
+        landmarks.push(lm)
+        kept++
+        return
+      }
+    }
     const lh = lotHeight(c.x, c.z, cores, seed, hash3(c.i, c.j, c.key, seed ^ 0x13))
     let h = lh.h
     if (c.lowRise) h = Math.min(h, 3 + 3 * hash3(c.i, c.j, c.key, seed ^ 0x21))
@@ -497,6 +572,8 @@ export function buildMetro(opts: MetroOptions): MetroPlan {
     boxCount += set.count
     triangles += set.count * MASSING_TRIS[massing]
   }
+  for (const lm of landmarks) triangles += KIT_BY_ID.get(lm.kit)?.tris ?? 0
+  boxCount += landmarks.length
   const lines = buildLines(R, half, seed)
   triangles += lines.quads * 2
   return {
@@ -504,6 +581,7 @@ export function buildMetro(opts: MetroOptions): MetroPlan {
     cores,
     groups,
     parks: { count: parkRects.length / 4, rects: new Float32Array(parkRects), lights: new Float32Array(parkLights) },
+    landmarks,
     lines,
     boxCount,
     triangles

@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { BoxGeometry, Color, MeshStandardMaterial, Ray, Vector3, type Texture } from 'three'
+import { BoxGeometry, Color, Ray, Vector3, type Texture } from 'three'
 import type { CityLayout } from '../../../shared/types'
 import { BuildingField, COLOR_FADE_S, CROSSFADE_S } from './BuildingField'
-import type { BuildingMaterials } from './buildingShader'
+import { createBuildingMaterials } from './buildingShader'
 import type { LoadedModel } from './assets/loader'
 import { getModel } from './assets/manifest'
 import { templateById } from './facade/templates'
 import { visHeight } from './geom'
+import { KIT_BUILDINGS, type KitBuilding } from './kit/kitManifest'
+import type { KitData } from './kit/loader'
 
 const layout: CityLayout = {
   buildings: [
@@ -20,14 +22,8 @@ const layout: CityLayout = {
 const gate = { style: 'stylized' as const, mode: 'live' as const, gitTs: null, firstSeen: {} }
 const realGate = { mode: 'live' as const, gitTs: null, firstSeen: {} }
 
-function mats(): BuildingMaterials {
-  return {
-    models: new MeshStandardMaterial(),
-    boxes: new MeshStandardMaterial(),
-    facade: new MeshStandardMaterial(),
-    time: { value: 0 },
-    tint: { value: 0 }
-  }
+function mats() {
+  return createBuildingMaterials()
 }
 
 /** A stand-in for a loaded model: a unit box in the model's own size, no textures. */
@@ -147,6 +143,17 @@ describe('BuildingField picking', () => {
   })
 })
 
+/** A stand-in for the loaded kit: every kit model as a unit box in its own world size, no textures. */
+function fakeKit(): KitData {
+  const buildings = new Map<string, { def: KitBuilding; geometry: BoxGeometry }>()
+  for (const def of KIT_BUILDINGS) {
+    const g = new BoxGeometry(def.footprintM.w / 10, def.heightM / 10, def.footprintM.d / 10)
+    g.translate(0, def.heightM / 20, 0)
+    buildings.set(def.id, { def, geometry: g })
+  }
+  return { buildings, ground: new BoxGeometry(1, 0, 1), textures: {} as KitData['textures'] } as KitData
+}
+
 /** The app steps at most 50 ms at a time (Buildings.tsx); the springs need small steps to settle. */
 function settle(f: BuildingField): void {
   for (let i = 0; i < 400; i++) f.step(0.02)
@@ -158,17 +165,21 @@ describe('BuildingField real style (facades)', () => {
     expect(f.style).toBe('real')
     expect(f.hasModels).toBe(true)
     expect(f.modelIds()).toEqual([])
-    const id = f.placementOf('a.ts')!.modelId
+    const id = f.slotFor('a.ts')!.massing.modelId
     expect(templateById(id)).toBeDefined()
-    // One mesh per template in use, each with the facade attributes the shader reads.
-    for (const m of f.meshes) expect(m.geometry.getAttribute('aFace')).toBeDefined()
+    // One mesh per template in use, each with the per-instance facade attributes the photo material reads.
+    for (const m of f.meshes) {
+      for (const name of ['aFacade', 'aLit', 'aSeed', 'aSize']) expect(m.geometry.getAttribute(name)).toBeDefined()
+      expect(m.castShadow).toBe(true)
+      expect(m.receiveShadow).toBe(true)
+    }
   })
 
-  it('draws each facade at its footprint times FILL, with the rendered height as its y scale', () => {
+  it('draws each massing at its footprint times FILL, with the rendered height as its y scale', () => {
     const f = new BuildingField(layout, mats(), null, realGate)
     settle(f)
     const slot = f.slotFor('a.ts')!
-    const p = f.placementOf('a.ts')!
+    const p = slot.massing
     expect(p.sx).toBeCloseTo(slot.w * 0.97, 9)
     expect(p.sz).toBeCloseTo(slot.d * 0.97, 9)
     expect(p.invY).toBe(1)
@@ -184,6 +195,45 @@ describe('BuildingField real style (facades)', () => {
     expect(f.slots[hit!.slot]!.path).toBe('a.ts')
     expect(hit!.point.y).toBeCloseTo(slot.h, 3)
     expect(f.pickRay(new Ray(new Vector3(3, 200, 1), new Vector3(0, -1, 0)))).toBeNull()
+  })
+
+  it('a kit tower stands where the kit fits, and its massing gives way to it when the kit is adopted', () => {
+    const tall: CityLayout = {
+      buildings: [
+        { path: 'k.ts', x: -3, z: -3, w: 6, d: 6, h: 10, lang: 'ts', color: '#ff0000', district: '' },
+        { path: 's.ts', x: 4, z: 0, w: 2, d: 2, h: 1, lang: 'ts', color: '#00ff00', district: '' }
+      ],
+      districts: [],
+      size: 120
+    }
+    const loc = new Map([['k.ts', 5000], ['s.ts', 20]])
+    const f = new BuildingField(tall, mats(), null, { ...realGate, loc })
+    const k = f.slotFor('k.ts')!
+    expect(k.kit).toBe(true)
+    expect(k.kitMix).toBe(0)
+    expect(f.drawingOf('k.ts')!.kit).toBe(true)
+    expect(f.slotFor('s.ts')!.kit).toBe(false)
+    expect(f.hasKit).toBe(false)
+
+    const kit = fakeKit()
+    expect(f.adoptKit(kit)).toBe(true)
+    expect(f.hasKit).toBe(true)
+    expect(f.adoptKit(kit)).toBe(false)
+    expect(f.meshes.length).toBeGreaterThan(1)
+    // Mid-crossfade the two layers share the building; after CROSSFADE_S the tower is all there is.
+    f.step(CROSSFADE_S / 2)
+    expect(k.kitMix).toBeGreaterThan(0)
+    expect(k.kitMix).toBeLessThan(1)
+    f.step(CROSSFADE_S)
+    expect(k.kitMix).toBe(1)
+    // The kit tower is at its rendered height: the kit's own height scaled to visHeight.
+    const kitDef = KIT_BUILDINGS.find((d) => d.id === f.drawingOf('k.ts')!.modelId)!
+    expect(kitDef).toBeDefined()
+    expect(k.place.invY * k.h * (kitDef.heightM / 10)).toBeCloseTo(k.h, 6)
+    // Picking the kit building still returns its path.
+    settle(f)
+    const hit = f.pickRay(new Ray(new Vector3(0, 200, 0), new Vector3(0, -1, 0)))
+    expect(hit && f.slots[hit.slot]!.path).toBe('k.ts')
   })
 
   it('a style change does not carry ghosts across (their models would not exist)', () => {

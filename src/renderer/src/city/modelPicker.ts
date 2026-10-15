@@ -2,6 +2,9 @@
 // Pure (no three.js): BuildingField turns the placements into instance matrices.
 import { modelsByClass, type ModelClass, type ModelDef } from './assets/manifest'
 import { TEMPLATES, templatesWith, templateTris, type Template } from './facade/templates'
+import { facadeSetFor, litFor } from './facade/massing'
+import { FACADE_SETS } from './facade/photo/sets'
+import { KIT_BUILDINGS, type KitBuilding, type KitTier } from './kit/kitManifest'
 
 /** Share of the file's footprint the model fills; the rest stays street and plaza. */
 export const FILL = 0.9
@@ -245,7 +248,16 @@ function degradeSmallest(plan: Placement[], alts: Placement[], order: readonly n
   return t
 }
 
-// ---------- 'real' style: facade templates ----------
+// ---------- 'real' style: kit towers and photographic massing ----------
+
+/** Share of files (by LOC) drawn as kit towers, at least one. The single largest file is always a candidate. */
+export const KIT_SHARE = 0.04
+/**
+ * Distortion limit for a kit tower: its footprint may be stretched to the file's aspect by at most this factor, and its
+ * height may differ from the footprint's geometric mean by at most this factor either way. Past it, the file keeps its
+ * photographic massing.
+ */
+export const KIT_MAX_DISTORTION = 1.6
 
 /** Share of the footprint a facade fills: the rest is the street gap the layout leaves between cells. */
 export const FACADE_FILL = 0.97
@@ -256,7 +268,7 @@ export const PLATE_MAX_H = 1.6
 /** LOC percentile where spires start: the top 1.5 % (the same cut as the height model). */
 const FACADE_SUPER_PCT = 0.985
 
-/** The facade template for one file. Pure: the path hash picks among the templates of the right kind. */
+/** The massing template for one file. Pure: the path hash picks among the templates of the right kind. */
 export function facadePlacement(input: PickInput, pct: number): Placement {
   const spire = pct >= FACADE_SUPER_PCT
   const tower = pct >= TOWER_PCT
@@ -283,10 +295,110 @@ export function facadePlacement(input: PickInput, pct: number): Placement {
   }
 }
 
-/** Facade placements for every building, in input order. No budget pass: a facade is a dozen quads. */
-export function planFacades(inputs: readonly PickInput[]): Placement[] {
+/** Kit geometry sizes in world units (the manifest gives metres: 10 m per unit). */
+export function kitSize(k: KitBuilding): { w: number; d: number; h: number } {
+  return { w: k.footprintM.w / 10, d: k.footprintM.d / 10, h: k.heightM / 10 }
+}
+
+/** How a kit tower would be scaled onto one file. Instance scales multiply the kit geometry, which is in world units. */
+export interface KitFit {
+  sx: number;
+  sz: number;
+  /** Instance y scale per world unit of rendered height: y scale = rendered height x invY. */
+  invY: number;
+  /** Footprint stretch: the larger side scale over the smaller (1 = the file's own aspect is the model's). */
+  footprintDistortion: number;
+  /** Vertical scale over the footprint's geometric mean scale (1 = true proportions). */
+  verticalStretch: number;
+}
+
+/** Fit of one kit tower to one file, or null when the stretch would exceed KIT_MAX_DISTORTION. Pure. */
+export function kitFit(input: PickInput, k: KitBuilding): KitFit | null {
+  const s = kitSize(k)
+  const sx = (Math.max(input.w, 1e-6) * FACADE_FILL) / s.w
+  const sz = (Math.max(input.d, 1e-6) * FACADE_FILL) / s.d
+  const invY = 1 / s.h
+  const footprintDistortion = Math.max(sx, sz) / Math.min(sx, sz)
+  const verticalStretch = (input.h * invY) / Math.sqrt(sx * sz)
+  if (footprintDistortion > KIT_MAX_DISTORTION) return null
+  if (verticalStretch > KIT_MAX_DISTORTION || verticalStretch < 1 / KIT_MAX_DISTORTION) return null
+  return { sx, sz, invY, footprintDistortion, verticalStretch }
+}
+
+type KitBand = 'top' | 'high' | 'rest'
+
+/** Tier penalties by rank band: the largest file wants a supertall, the next quarter towers, the rest mid-rise. */
+const KIT_TIER_PENALTY: Record<KitBand, Record<KitTier, number>> = {
+  top: { supertall: 0, tower: 0.6, midrise: 1.2, lowrise: 2 },
+  high: { supertall: 0.25, tower: 0, midrise: 0.6, lowrise: 1.5 },
+  rest: { supertall: 1, tower: 0.3, midrise: 0, lowrise: 0.4 }
+}
+
+const KIT_CLASS: Record<KitTier, ModelClass> = { supertall: 'skyscraper', tower: 'tower', midrise: 'midrise', lowrise: 'lowrise' }
+
+/** How many files are drawn as kit towers in a repo of n files. */
+export function kitCount(n: number): number {
+  return n <= 0 ? 0 : Math.max(1, Math.round(n * KIT_SHARE))
+}
+
+/** The kit tower for one file of LOC rank `rank` (0 = largest), or null when none fits within the stretch limit. */
+export function pickKit(input: PickInput, rank: number, count: number, kits: readonly KitBuilding[] = KIT_BUILDINGS): Placement | null {
+  const band: KitBand = rank === 0 ? 'top' : rank < count / 4 ? 'high' : 'rest'
+  let min = Infinity
+  const ok: { k: KitBuilding; fit: KitFit; score: number }[] = []
+  for (const k of kits) {
+    const fit = kitFit(input, k)
+    if (!fit) continue
+    const score = KIT_TIER_PENALTY[band][k.tier] + Math.abs(Math.log(fit.verticalStretch))
+    ok.push({ k, fit, score })
+    if (score < min) min = score
+  }
+  if (ok.length === 0) return null
+  const near = ok.filter((e) => e.score <= min + NEAR_TIE)
+  const pick = near[Math.min(near.length - 1, Math.floor(hashPath(input.path + '|kit') * near.length))]!
+  const { k, fit } = pick
+  return {
+    modelId: k.id,
+    cls: KIT_CLASS[k.tier],
+    tris: k.tris,
+    sx: fit.sx,
+    sz: fit.sz,
+    invY: fit.invY,
+    stretch: fit.verticalStretch
+  }
+}
+
+/** One file in the 'real' style: a kit tower or the photographic massing, with the facade set and lit share of its wall. */
+export interface RealPlacement {
+  /** True: drawn as the kit tower in `place`. False: drawn as the massing in `place`. */
+  kit: boolean;
+  /** What is drawn: the kit model, or the massing template. */
+  place: Placement;
+  /** The massing, always computed: what a file shows before the kit models are in, and when it is not a kit. */
+  massing: Placement;
+  /** Index into FACADE_SETS (the atlas cell and the aFacade value). */
+  facadeSet: number;
+  /** Lit share of the windows, 0..1 (aLit). */
+  lit: number;
+}
+
+/**
+ * The real style's plan for every file, in input order. The top kitCount(n) files by LOC are kit towers where one fits the
+ * stretch limit; the rest, and any file no kit fits, are massing. Pure and deterministic.
+ */
+export function planReal(inputs: readonly PickInput[]): RealPlacement[] {
   const rank = new LocRank(inputs.map((i) => i.loc))
-  return inputs.map((i) => facadePlacement(i, rank.percentile(i.loc)))
+  const order = inputs.map((_, i) => i).sort((a, b) => inputs[b]!.loc - inputs[a]!.loc || hashPath(inputs[a]!.path) - hashPath(inputs[b]!.path))
+  const rankOf = new Int32Array(inputs.length)
+  order.forEach((idx, r) => { rankOf[idx] = r })
+  const count = kitCount(inputs.length)
+  return inputs.map((input, i) => {
+    const massing = facadePlacement(input, rank.percentile(input.loc))
+    const facadeSet = facadeSetFor(input.h, hashPath(input.path + '|set'))
+    const lit = litFor(FACADE_SETS[facadeSet]!, hashPath(input.path + '|lit'))
+    const kit = rankOf[i]! < count ? pickKit(input, rankOf[i]!, count) : null
+    return kit ? { kit: true, place: kit, massing, facadeSet, lit } : { kit: false, place: massing, massing, facadeSet, lit }
+  })
 }
 
 /** Lines of code by path, from a scan's files. */

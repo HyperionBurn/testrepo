@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
   COLOR_KEYS, LEVEL_KEYS, PRESETS, PresetTransition, TIMES_OF_DAY, blendInto, easeInOut, emptyResolved,
-  isTimeOfDay, nextTimeOfDay, resolvePreset
+  DEFAULT_TIME_OF_DAY, isTimeOfDay, nextTimeOfDay, resolvePreset
 } from './skyPresets'
 import { contrastRatio, relativeLuminance } from './palette'
 
 describe('time of day', () => {
-  it('cycles blue, night, dawn and back', () => {
+  it('cycles golden, blue, night, dawn and back', () => {
+    expect(nextTimeOfDay('golden')).toBe('blue')
     expect(nextTimeOfDay('blue')).toBe('night')
     expect(nextTimeOfDay('night')).toBe('dawn')
-    expect(nextTimeOfDay('dawn')).toBe('blue')
+    expect(nextTimeOfDay('dawn')).toBe('golden')
+  })
+
+  it('golden hour is the default', () => {
+    expect(DEFAULT_TIME_OF_DAY).toBe('golden')
   })
 
   it('accepts only the known presets', () => {

@@ -9,16 +9,19 @@ import { useSky } from '../state/store'
 import type { TimeOfDay } from './skyPresets'
 import blueHdr from './env/kloppenheim_02_1k.hdr?url'
 import nightHdr from './env/satara_night_1k.hdr?url'
+import goldenHdr from './env/spruit_sunrise_1k.hdr?url'
 
-/** Which HDRI lights each time of day. Dawn borrows the blue-hour sky: it is the same kind of soft, low light. */
+/** Which HDRI lights each time of day. Dawn borrows the sunrise sky: it is the same kind of low, warm light. */
 const HDRI_URL: Record<TimeOfDay, string> = {
+  golden: goldenHdr,
   blue: blueHdr,
-  dawn: blueHdr,
+  dawn: goldenHdr,
   night: nightHdr
 }
 
 /** scene.environmentIntensity per time of day: glass and wet roads pick up a hint of the sky, nothing more. */
 export const ENV_INTENSITY: Record<TimeOfDay, number> = {
+  golden: 0.5,
   blue: 0.45,
   dawn: 0.4,
   night: 0.3

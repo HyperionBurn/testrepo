@@ -103,6 +103,18 @@ const BASE: GradeParams = {
 
 /** The grade for each time of day. Night lifts toward brown, dawn toward lilac. */
 export const GRADES: Record<TimeOfDay, GradeParams> = {
+  // Golden hour: warm highlights, slightly cool shadows, gentle contrast, lifted but never crushed blacks.
+  golden: {
+    ...BASE,
+    lift: [0.02, 0.018, 0.024],
+    shadowTint: [0.9, 0.96, 1.08],
+    highTint: [1.08, 1.02, 0.9],
+    split: 0.12,
+    curve: 0.3,
+    warmSat: 0.12,
+    bloom: { intensity: 0.35, threshold: 0.92, radius: 0.5 },
+    halation: { intensity: 0.06, threshold: 0.85, radius: 0.6 }
+  },
   blue: BASE,
   night: {
     ...BASE,

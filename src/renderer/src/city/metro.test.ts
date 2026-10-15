@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
-  BRIDGES, EXCLUSION_MARGIN, GRID_ANGLE, LOT_DEPTH, MAX_LOTS, METRO_RADIUS, RIVERS, bridgeSpan, buildMetro, footprintBox,
-  hashName, lotHeight, metroCores, nearCap, overlaps, touchesRiver, type LotSet, type MetroPlan
+  BRIDGES, EXCLUSION_MARGIN, GRID_ANGLE, LANDMARK_CORE, LANDMARK_DECO_MAX, LANDMARK_SPACING, LOT_DEPTH, MAX_LOTS, METRO_RADIUS, RIVERS,
+  bridgeSpan, buildMetro, coreMask, footprintBox, hashName, lotHeight, metroCores, nearCap, overlaps, touchesRiver, type LotSet, type MetroPlan
 } from './metro'
+import { KIT_BUILDINGS, type KitBuilding } from './kit/kitManifest'
+
+const KIT_BY_ID = (id: string): KitBuilding => {
+  const k = KIT_BUILDINGS.find((d) => d.id === id)
+  if (!k) throw new Error(`no kit ${id}`)
+  return k
+}
 
 const HALF = 60 // half the repo city square (CITY_SIZE 120)
 const NAME = 'skyline'
@@ -219,5 +226,65 @@ describe('metro plan', () => {
   it('uses a fixed avenue grid aligned to the repo streets', () => {
     expect(GRID_ANGLE).toBe(0)
     expect(LOT_DEPTH).toBeGreaterThan(8)
+  })
+})
+
+describe('metro landmarks (kit towers in the cores)', () => {
+  const plan = buildMetro({ name: NAME, half: HALF })
+  const cores = metroCores(plan.seed)
+  const coreLots = allLots(plan).filter((l) => coreMask(l.x, l.z, cores) >= LANDMARK_CORE).length
+
+  it('places kit towers in the cores, at 2 to 3 % of the core lots', () => {
+    expect(plan.landmarks.length).toBeGreaterThan(0)
+    for (const lm of plan.landmarks) expect(coreMask(lm.x, lm.z, cores)).toBeGreaterThanOrEqual(LANDMARK_CORE)
+    const share = plan.landmarks.length / (coreLots + plan.landmarks.length)
+    expect(share).toBeGreaterThanOrEqual(0.02)
+    expect(share).toBeLessThanOrEqual(0.03)
+  })
+
+  it('never puts the same kit tower twice within 120 units', () => {
+    for (let i = 0; i < plan.landmarks.length; i++) {
+      for (let j = i + 1; j < plan.landmarks.length; j++) {
+        const a = plan.landmarks[i]!
+        const b = plan.landmarks[j]!
+        if (a.kit !== b.kit) continue
+        expect(Math.hypot(a.x - b.x, a.z - b.z)).toBeGreaterThanOrEqual(LANDMARK_SPACING)
+      }
+    }
+  })
+
+  it('the deco supertall stands at most twice in the whole metropolis', () => {
+    const decos = plan.landmarks.filter((l) => l.kit.startsWith('deco'))
+    expect(decos.length).toBeLessThanOrEqual(LANDMARK_DECO_MAX)
+  })
+
+  it('is sized by the real height and footprint of its kit tower (10 m per unit)', () => {
+    for (const lm of plan.landmarks) {
+      const k = KIT_BY_ID(lm.kit)
+      expect(lm.h).toBeCloseTo(k.heightM / 10, 9)
+      expect(lm.w).toBeCloseTo(k.footprintM.w / 10, 9)
+      expect(lm.d).toBeCloseTo(k.footprintM.d / 10, 9)
+    }
+  })
+
+  it('keeps out of the repo square, the rivers and the bridges', () => {
+    for (const lm of plan.landmarks) {
+      const b = footprintBox(lm.x, lm.z, lm.w, lm.d, lm.rot)
+      expect(b.x1 <= -HALF - EXCLUSION_MARGIN || b.x0 >= HALF + EXCLUSION_MARGIN || b.z1 <= -HALF - EXCLUSION_MARGIN || b.z0 >= HALF + EXCLUSION_MARGIN).toBe(true)
+      expect(touchesRiver(b.x0, b.x1)).toBe(false)
+      expect(BRIDGES.some((br) => overlaps(bridgeSpan(br), b))).toBe(false)
+    }
+  })
+
+  it('every lot carries its facade set, and the landmarks are counted in the triangles', () => {
+    for (const g of plan.groups) {
+      expect(g.set.facade.length).toBe(g.set.count)
+      for (const f of g.set.facade) expect(f).toBeLessThan(14)
+    }
+    expect(plan.triangles).toBeGreaterThan(plan.landmarks.length)
+  })
+
+  it('stays under the metropolis budget: at most 4.5 M triangles in total', () => {
+    expect(plan.triangles).toBeLessThanOrEqual(4_500_000)
   })
 })

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { getModel, modelsByClass, type ModelClass } from './assets/manifest'
+import { FACADE_SETS } from './facade/photo/sets'
+import { TEMPLATES } from './facade/templates'
+import { KIT_BUILDINGS } from './kit/kitManifest'
 import {
   BIG_REPO,
+  FACADE_FILL,
   FILL,
   LocRank,
   MAX_STRETCH,
@@ -10,6 +14,11 @@ import {
   TRI_BUDGET,
   classChain,
   hashPath,
+  kitCount,
+  kitFit,
+  KIT_MAX_DISTORTION,
+  KIT_SHARE,
+  planReal,
   locByPath,
   pickPlacement,
   planBudget,
@@ -213,3 +222,86 @@ describe('triangle budget', () => {
     expect(a.map((p) => p.modelId)).toEqual(b.map((p) => p.modelId))
   })
 })
+
+describe("real style: kit towers for the top files by LOC", () => {
+  it('draws about KIT_SHARE of the files as kit towers, at least one', () => {
+    expect(kitCount(1)).toBe(1)
+    expect(kitCount(0)).toBe(0)
+    expect(kitCount(1000)).toBe(Math.round(1000 * KIT_SHARE))
+    expect(KIT_SHARE).toBeGreaterThanOrEqual(0.03)
+    expect(KIT_SHARE).toBeLessThanOrEqual(0.05)
+  })
+
+  it('the single largest file is a kit candidate: the supertall when it fits, and it becomes a kit tower', () => {
+    // A wide, tall file: the deco supertall (84 x 75 m footprint, 430 m) fits its footprint and height with no stretch.
+    const big: PickInput = { path: 'big.ts', w: 6, d: 6, h: 20, loc: 9000 }
+    const rest: PickInput[] = Array.from({ length: 30 }, (_, i) => ({ path: `r${i}.ts`, w: 1.5, d: 1.5, h: 3, loc: 100 + i }))
+    const plan = planReal([big, ...rest])
+    expect(plan[0]!.kit).toBe(true)
+    expect(plan[0]!.place.modelId).toBe('deco-24')
+  })
+
+  it('a file no kit fits keeps its massing (the stretch limit falls back, it is never distorted)', () => {
+    const slender: PickInput = { path: 'slender.ts', w: 0.2, d: 25, h: 22, loc: 9000 }
+    const rest: PickInput[] = Array.from({ length: 30 }, (_, i) => ({ path: `r${i}.ts`, w: 1.5, d: 1.5, h: 3, loc: 100 + i }))
+    const plan = planReal([slender, ...rest])
+    expect(plan[0]!.kit).toBe(false)
+    expect(plan[0]!.place.cls).not.toBe('skyscraper')
+    expect(templateIds()).toContain(plan[0]!.place.modelId)
+  })
+
+  it('only the top kitCount files by LOC can be kit towers, and every kit placement is inside the stretch limit', () => {
+    const inputs = Array.from({ length: 400 }, (_, i) => ({
+      path: `f${i}.ts`,
+      w: 1 + (i % 7) * 0.9,
+      d: 1 + (i % 5) * 0.7,
+      h: 2 + (i % 13) * 1.6,
+      loc: 10 + ((i * 97) % 3000)
+    }))
+    const plan = planReal(inputs)
+    const count = kitCount(inputs.length)
+    const topLoc = new Set(inputs.map((x, i) => ({ loc: x.loc, i })).sort((a, b) => b.loc - a.loc).slice(0, count).map((x) => x.i))
+    plan.forEach((p, i) => {
+      if (!p.kit) return
+      expect(topLoc.has(i)).toBe(true)
+      const k = KIT_BUILDINGS.find((d) => d.id === p.place.modelId)!
+      const fit = kitFit(inputs[i]!, k)!
+      expect(fit).not.toBeNull()
+      expect(fit.footprintDistortion).toBeLessThanOrEqual(KIT_MAX_DISTORTION + 1e-9)
+      expect(fit.verticalStretch).toBeLessThanOrEqual(KIT_MAX_DISTORTION + 1e-9)
+      expect(fit.verticalStretch).toBeGreaterThanOrEqual(1 / KIT_MAX_DISTORTION - 1e-9)
+    })
+  })
+
+  it('is deterministic per path, and independent of the input order', () => {
+    const inputs = Array.from({ length: 200 }, (_, i) => ({ path: `d/f${i}.ts`, w: 2 + (i % 4), d: 2 + (i % 3), h: 4 + (i % 9), loc: 50 + ((i * 131) % 4000) }))
+    const a = planReal(inputs).map((p) => `${p.kit}:${p.place.modelId}:${p.facadeSet}:${p.lit.toFixed(6)}`)
+    const b = planReal(inputs).map((p) => `${p.kit}:${p.place.modelId}:${p.facadeSet}:${p.lit.toFixed(6)}`)
+    expect(a).toEqual(b)
+  })
+
+  it('every file has a massing and a facade set, kit or not', () => {
+    const inputs = Array.from({ length: 60 }, (_, i) => ({ path: `m${i}.ts`, w: 2, d: 2, h: 3, loc: 10 + i * 40 }))
+    for (const p of planReal(inputs)) {
+      expect(p.massing.tris).toBeGreaterThan(0)
+      expect(p.facadeSet).toBeGreaterThanOrEqual(0)
+      expect(p.facadeSet).toBeLessThan(FACADE_SETS.length)
+      expect(p.lit).toBeGreaterThanOrEqual(0)
+      expect(p.lit).toBeLessThanOrEqual(1)
+    }
+  })
+
+  it('a kit tower is drawn at the file footprint times FILL and its height is the rendered height', () => {
+    const big: PickInput = { path: 'big.ts', w: 6, d: 6, h: 20, loc: 9000 }
+    const [p] = planReal([big])
+    expect(p!.kit).toBe(true)
+    const k = KIT_BUILDINGS.find((d) => d.id === p!.place.modelId)!
+    expect(p!.place.sx * k.footprintM.w / 10).toBeCloseTo(6 * FACADE_FILL, 9)
+    expect(p!.place.sz * k.footprintM.d / 10).toBeCloseTo(6 * FACADE_FILL, 9)
+    expect(p!.place.invY * k.heightM / 10 * 20).toBeCloseTo(20, 9)
+  })
+})
+
+function templateIds(): string[] {
+  return TEMPLATES.map((t) => t.id)
+}

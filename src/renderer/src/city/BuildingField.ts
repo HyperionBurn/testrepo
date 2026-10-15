@@ -1,10 +1,12 @@
-// The building field: every file as a real Kenney model, one InstancedMesh per model id, plus the per-instance
-// state that drives it. Plain TypeScript (no React). Buildings.tsx rebuilds the field when the layout changes,
-// carries the animation state of surviving buildings over, and steps it every frame.
+// The building field: every file as a building, one InstancedMesh per model (kit tower, Kenney model) or facade template,
+// plus the per-instance state that drives it. Plain TypeScript (no React). Buildings.tsx rebuilds the field when the
+// layout changes, carries the animation state of surviving buildings over, and steps it every frame.
 //
-// Layers: the procedural boxes are shown until the models are ready, then the models crossfade in by instance scale
-// (adoptModels). Per-slot state (colors, glow, selection, shimmer, height) lives in slot-indexed arrays and is written
-// to every layer's instance attributes, so a layer can be added at any time.
+// Layers. Real style: a 'facade' layer (every file as its photographic massing, one InstancedMesh per template) and a
+// 'kit' layer (the kit towers, one InstancedMesh per kit model). A kit file shows its massing until the kit is in, then
+// the massing shrinks and the tower grows (kitMix). Stylized style: the procedural boxes, then the Kenney models
+// crossfade in by instance scale (adoptModels). Per-slot state (colors, glow, selection, shimmer, height) lives in
+// slot-indexed arrays and is written to every layer's instance attributes, so a layer can be added at any time.
 //
 // Picking: pickRay answers "which building does this ray hit" through BuildingPicker (picking.ts), so no
 // THREE.Raycaster runs over the instances. Each mesh's raycast() reports only the building it owns.
@@ -12,10 +14,11 @@ import { BoxGeometry, BufferAttribute, BufferGeometry, Color, InstancedBufferAtt
 import type { CityLayout } from '@shared/types'
 import type { BuildingStyle, Heat, Mode } from '../state/store'
 import { visHeight } from './geom'
-import { DEFAULT_LOC, hashPath, planBudget, planFacades, type Placement, type PickInput } from './modelPicker'
-import { buildTemplateMesh, templateById } from './facade/templates'
+import { DEFAULT_LOC, hashPath, planBudget, planReal, type Placement, type PickInput } from './modelPicker'
+import { buildMassingMesh, templateById } from './facade/templates'
 import { BuildingPicker } from './picking'
 import type { LoadedModel } from './assets/loader'
+import type { KitData } from './kit/loader'
 import type { BuildingMaterials } from './buildingShader'
 
 /** Seconds for a touch glow to fade from 1 to 0. */
@@ -31,8 +34,11 @@ const SHIMMER_RATE = 1.6
 /** 'real' (the default): procedural New York facades. 'stylized': the Kenney models, with the boxes until they load. */
 export type { BuildingStyle }
 
-/** Layers: the boxes and Kenney models of the stylized style, or the facade templates of the real style. */
-type LayerKind = 'boxes' | 'models' | 'facade'
+/** Layers: the boxes and Kenney models of the stylized style, or the massing and kit towers of the real style. */
+type LayerKind = 'boxes' | 'models' | 'facade' | 'kit'
+
+/** Instance values of a layer that are not per-slot state: a stylized model is lit by the default, a massing by its set. */
+const DEFAULT_LIT = 0.28
 
 export interface FieldGate {
   /** Which look to build. Defaults to 'real'. */
@@ -46,6 +52,8 @@ export interface FieldGate {
   loc?: ReadonlyMap<string, number> | null;
   /** Models already in memory. When all the ids this field needs are here it starts with them, with no boxes. */
   models?: ReadonlyMap<string, LoadedModel> | null;
+  /** The kit towers (real style), when loaded. Without them the kit files show their massing until adoptKit. */
+  kit?: KitData | null;
 }
 
 export interface Slot {
@@ -60,7 +68,14 @@ export interface Slot {
   dead: boolean;          // finished sinking, hidden until the next layout
   base: string;           // the layout's color (language), used when a color mode has no entry for the path
   writtenH: number;       // height last written to the instance buffers
-  place: Placement;       // model for this file (kept while the file is a ghost)
+  place: Placement;       // what this file draws: the kit tower (kit), or its model or massing template
+  /** Real style: the file is a kit tower, and kitMix (0..1) is how far its tower has risen over the massing. */
+  kit: boolean;
+  kitMix: number;
+  /** Real style: the massing template (always), the facade set (index into FACADE_SETS) and the lit share of its windows. */
+  massing: Placement;
+  facadeSet: number;
+  lit: number;
 }
 
 interface Batch {
@@ -74,13 +89,18 @@ interface Batch {
   aGlowColor: InstancedBufferAttribute;
   aSel: InstancedBufferAttribute;
   aShim: InstancedBufferAttribute;
+  /** Packed (glow, selection, shimmer) for the photographic and kit materials; the stylized ones read the three above. */
+  aFx: InstancedBufferAttribute;
   aSeed: InstancedBufferAttribute;
+  aFacade: InstancedBufferAttribute;
+  aLit: InstancedBufferAttribute;
+  aTint: InstancedBufferAttribute;
 }
 
 interface Layer {
   kind: LayerKind;
   batches: Batch[];
-  /** Slot index to batch index, and to the local instance index inside that batch. */
+  /** Slot index to batch index (-1: the slot is not in this layer), and to the local instance index inside that batch. */
   slotBatch: Int32Array;
   slotLocal: Int32Array;
   /** Instance scale factor of the whole layer (crossfade). */
@@ -105,7 +125,7 @@ function smooth01(t: number): number {
 export class BuildingField {
   readonly slots: Slot[];
   readonly style: BuildingStyle;
-  /** Called when the set of meshes changes (models adopted, boxes removed). */
+  /** Called when the set of meshes changes (models adopted, boxes removed, kit towers in). */
   onChange: (() => void) | null = null;
 
   private readonly mats: BuildingMaterials;
@@ -115,6 +135,8 @@ export class BuildingField {
   private readonly picker: BuildingPicker;
   private disposed = false;
   private fadeT = 1;
+  /** Real style: the kit layer is in, and its towers rise over the massing (kitMix). */
+  private kitLayer = false;
 
   // Slot-indexed state. Written to the layers through the flush helpers.
   private readonly colorCur: Float32Array;
@@ -148,7 +170,8 @@ export class BuildingField {
       h: visHeight(b, layout),
       loc: gate.loc?.get(b.path) ?? DEFAULT_LOC
     }))
-    const plan = this.style === 'real' ? planFacades(inputs) : planBudget(inputs)
+    const real = this.style === 'real' ? planReal(inputs) : null
+    const plan = this.style === 'real' ? null : planBudget(inputs)
 
     const nowPaths = new Set<string>()
     const slots: Slot[] = []
@@ -156,6 +179,8 @@ export class BuildingField {
       nowPaths.add(b.path)
       const old = prev?.slotFor(b.path)
       const target = inputs[k]!.h
+      const rp = real?.[k] ?? null
+      const kit = rp?.kit ?? false
       slots.push({
         path: b.path,
         x: b.x, z: b.z, w: b.w, d: b.d,
@@ -170,7 +195,12 @@ export class BuildingField {
         dead: false,
         base: b.color,
         writtenH: -1,
-        place: plan[k]!
+        place: rp ? rp.place : plan![k]!,
+        kit,
+        kitMix: kit ? (old && old.kit ? old.kitMix : gate.kit ? 1 : 0) : 0,
+        massing: rp ? rp.massing : plan![k]!,
+        facadeSet: rp ? rp.facadeSet : 0,
+        lit: rp ? rp.lit : DEFAULT_LIT
       })
     })
     // Files that left the layout keep their footprint and model, and sink into the ground (not across a style change,
@@ -203,17 +233,16 @@ export class BuildingField {
       slots.map((s) => (s.ghost || s.dead ? 0 : s.h))
     )
 
-    const ready = gate.models
-    const needed = this.modelIds()
+    this.fadeT = 1
     if (this.style === 'real') {
-      this.fadeT = 1
       this.addLayer(this.buildLayer('facade', null))
-    } else if (ready && needed.every((id) => ready.has(id))) {
-      this.fadeT = 1
-      this.addLayer(this.buildLayer('models', ready))
+      if (gate.kit) this.addLayer(this.buildLayer('kit', gate.kit))
+      this.kitLayer = !!gate.kit
     } else {
-      this.fadeT = 1
-      this.addLayer(this.buildLayer('boxes', null))
+      const ready = gate.models
+      const needed = this.modelIds()
+      if (ready && needed.every((id) => ready.has(id))) this.addLayer(this.buildLayer('models', ready))
+      else this.addLayer(this.buildLayer('boxes', null))
     }
     this.retarget(gate.mode, gate.gitTs, gate.firstSeen)
     this.commit()
@@ -221,9 +250,14 @@ export class BuildingField {
 
   // ---------- public API ----------
 
-  /** True once the building layer is in: the facades (always, in the real style) or the models (stylized). */
+  /** True once the building layer is in: the massing (always, in the real style) or the models (stylized). */
   get hasModels(): boolean {
     return this.layers.some((L) => L.kind !== 'boxes')
+  }
+
+  /** Real style: the kit towers are in (or were built in with the field). */
+  get hasKit(): boolean {
+    return this.kitLayer
   }
 
   /** Every instanced mesh that should be in the scene right now. */
@@ -243,7 +277,7 @@ export class BuildingField {
     return n
   }
 
-  /** Model ids this field needs (ghosts included). */
+  /** Stylized: the Kenney model ids this field needs (ghosts included). Real style: none (kit towers adopt separately). */
   modelIds(): string[] {
     if (this.style === 'real') return []
     return [...new Set(this.slots.map((s) => s.place.modelId))]
@@ -253,6 +287,13 @@ export class BuildingField {
   placementOf(path: string): Placement | undefined {
     const i = this.byPath.get(path)
     return i === undefined ? undefined : this.slots[i]?.place
+  }
+
+  /** Real style: how one live file is drawn (kit or massing), for tests and debugging. */
+  drawingOf(path: string): { kit: boolean; modelId: string; facadeSet: number; lit: number } | undefined {
+    const s = this.slotFor(path)
+    if (!s) return undefined
+    return { kit: s.kit, modelId: s.place.modelId, facadeSet: s.facadeSet, lit: s.lit }
   }
 
   /**
@@ -268,6 +309,20 @@ export class BuildingField {
     for (const L of this.layers) if (L.kind === 'boxes') L.pickable = false
     this.addLayer(layer)
     this.fadeT = 0
+    this.writeAllMatrices()
+    this.commit()
+    return true
+  }
+
+  /**
+   * Real style: adopts the kit towers. The kit files' massing shrinks as their towers rise over CROSSFADE_S. Returns false
+   * when the kit is already in, the field is a stylized one, or the field is gone.
+   */
+  adoptKit(kit: KitData): boolean {
+    if (this.disposed || this.style !== 'real' || this.kitLayer) return false
+    this.addLayer(this.buildLayer('kit', kit))
+    for (const s of this.slots) if (s.kit) s.kitMix = 0
+    this.kitLayer = true
     this.writeAllMatrices()
     this.commit()
     return true
@@ -347,13 +402,18 @@ export class BuildingField {
     }
   }
 
-  /** Advances the height springs, shimmer, ghost sinking, color transition and layer crossfade. dt in seconds. */
+  /** Advances the height springs, shimmer, ghost sinking, color transition, kit rise and layer crossfade. dt in seconds. */
   step(dt: number, realDt: number = dt): void {
     if (this.colorT < 1) this.stepColor(dt)
     if (this.fadeT < 1) this.stepFade(realDt)
     const slots = this.slots
+    const rise = this.kitLayer ? Math.min(1, dt / CROSSFADE_S) : 0
     for (let i = 0; i < slots.length; i++) {
       const s = slots[i]!
+      if (rise > 0 && s.kit && s.kitMix < 1) {
+        s.kitMix = Math.min(1, s.kitMix + rise)
+        this.writeMatrix(i)
+      }
       if (!s.dead) {
         const diff = s.target - s.h
         if (Math.abs(diff) < 1e-4 && Math.abs(s.v) < 1e-4) {
@@ -375,8 +435,9 @@ export class BuildingField {
         s.shim = s.shim * Math.exp(-dt * SHIMMER_RATE)
         if (s.shim < 0.002) s.shim = 0
         for (const L of this.layers) {
-          const b = L.batches[L.slotBatch[i]!]!
-          b.aShim.setX(L.slotLocal[i]!, s.shim)
+          const bi = L.slotBatch[i]!
+          if (bi < 0) continue
+          setFx(L.batches[bi]!, L.slotLocal[i]!, this.glow[i]!, this.sel[i]!, s.shim)
           L.dirtyAttr = true
         }
       }
@@ -470,6 +531,7 @@ export class BuildingField {
   private addLayer(L: Layer): void {
     this.layers.push(L)
     this.refreshMeshes()
+    this.writeAllMatrices()
   }
 
   private refreshMeshes(): void {
@@ -484,24 +546,25 @@ export class BuildingField {
     }
   }
 
-  /** Builds a layer: boxes, or one batch per model id. Every slot is in exactly one batch of the layer. */
-  private buildLayer(kind: LayerKind, models: ReadonlyMap<string, LoadedModel> | null): Layer {
+  /**
+   * Builds a layer: boxes, one batch per model id, or one batch per massing template ('facade') or kit model ('kit', for
+   * the kit slots only). Every slot is in at most one batch of a layer.
+   */
+  private buildLayer(kind: LayerKind, models: ReadonlyMap<string, LoadedModel> | KitData | null): Layer {
     const n = this.slots.length
     const groups = new Map<string, number[]>()
-    if (kind === 'boxes') {
-      groups.set('box', this.slots.map((_, i) => i))
-    } else {
-      for (let i = 0; i < n; i++) {
-        const id = this.slots[i]!.place.modelId
-        let g = groups.get(id)
-        if (!g) groups.set(id, (g = []))
-        g.push(i)
-      }
+    for (let i = 0; i < n; i++) {
+      const s = this.slots[i]!
+      if (kind === 'kit' && !s.kit) continue
+      const id = kind === 'boxes' ? 'box' : kind === 'facade' ? s.massing.modelId : s.place.modelId
+      let g = groups.get(id)
+      if (!g) groups.set(id, (g = []))
+      g.push(i)
     }
     const layer: Layer = {
       kind,
       batches: [],
-      slotBatch: new Int32Array(n),
+      slotBatch: new Int32Array(n).fill(-1),
       slotLocal: new Int32Array(n),
       fade: 1,
       pickable: true,
@@ -518,10 +581,15 @@ export class BuildingField {
         geometry.translate(0, 0.5, 0) // base sits at y = 0
         material = this.mats.boxes
       } else if (kind === 'facade') {
-        geometry = templateGeometry(id)
+        geometry = massingGeometry(id)
         material = this.mats.facade
+      } else if (kind === 'kit') {
+        const src = (models as KitData).buildings.get(id)
+        if (!src) throw new Error(`kit model not loaded: ${id}`)
+        geometry = shareGeometry(src.geometry)
+        material = this.mats.kit
       } else {
-        const src = models?.get(id)
+        const src = (models as ReadonlyMap<string, LoadedModel>).get(id)
         if (!src) throw new Error(`model not loaded: ${id}`)
         geometry = shareGeometry(src.geometry)
         material = this.mats.models
@@ -539,20 +607,23 @@ export class BuildingField {
     return layer
   }
 
-  /** Writes every per-slot value into one layer. */
+  /** Writes every per-slot value of a layer's own slots into its batches. */
   private syncLayer(L: Layer): void {
     for (let i = 0; i < this.slots.length; i++) {
-      const b = L.batches[L.slotBatch[i]!]!
+      const bi = L.slotBatch[i]!
+      if (bi < 0) continue
+      const b = L.batches[bi]!
       const l = L.slotLocal[i]!
       const s = this.slots[i]!
       b.aSeed.setX(l, s.seed)
-      b.aShim.setX(l, s.shim)
-      b.aGlow.setX(l, this.glow[i]!)
+      setFx(b, l, this.glow[i]!, this.sel[i]!, s.shim)
       b.aGlowColor.setXYZ(l, this.glowCol[i * 3]!, this.glowCol[i * 3 + 1]!, this.glowCol[i * 3 + 2]!)
-      b.aSel.setX(l, this.sel[i]!)
       b.aLang.setXYZ(l, this.colorCur[i * 3]!, this.colorCur[i * 3 + 1]!, this.colorCur[i * 3 + 2]!)
-      this.writeMatrix(i)
+      b.aFacade.setX(l, s.facadeSet)
+      b.aLit.setX(l, L.kind === 'facade' || L.kind === 'kit' ? s.lit : DEFAULT_LIT)
+      b.aTint.setXYZ(l, 1, 1, 1)
     }
+    for (let i = 0; i < this.slots.length; i++) if (L.slotBatch[i]! >= 0) this.writeMatrix(i)
     L.dirtyMatrix = true
     L.dirtyAttr = true
     L.dirtyColor = true
@@ -560,6 +631,13 @@ export class BuildingField {
 
   private layerOf(kind: LayerKind): Layer | undefined {
     return this.layers.find((L) => L.kind === kind)
+  }
+
+  /** The share of a slot a layer draws: the massing gives way to the kit tower as kitMix rises. */
+  private slotMult(L: Layer, s: Slot): number {
+    if (L.kind === 'facade') return s.kit ? 1 - s.kitMix : 1
+    if (L.kind === 'kit') return s.kitMix
+    return 1
   }
 
   private stepFade(dt: number): void {
@@ -581,7 +659,9 @@ export class BuildingField {
     if (!L.pickable) return
     const hit = this.pickRay(rc.ray)
     if (!hit) return
-    if (L.batches[L.slotBatch[hit.slot]!] !== b) return
+    const bi = L.slotBatch[hit.slot]!
+    if (bi < 0 || L.batches[bi] !== b) return
+    if (this.slotMult(L, this.slots[hit.slot]!) < 0.5) return
     if (hit.distance < rc.near || hit.distance > rc.far) return
     hits.push({ distance: hit.distance, point: hit.point, object: b.mesh, instanceId: L.slotLocal[hit.slot] } as Intersection)
   }
@@ -595,24 +675,27 @@ export class BuildingField {
     if (!s.ghost) this.picker.setTop(i, hh)
     this.rayValid = false
     for (const L of this.layers) {
-      const b = L.batches[L.slotBatch[i]!]!
+      const bi = L.slotBatch[i]!
+      if (bi < 0) continue
+      const b = L.batches[bi]!
       const l = L.slotLocal[i]!
       const m = b.mesh.instanceMatrix.array as Float32Array
       const o = l * 16
-      const k = L.fade
+      const k = L.fade * this.slotMult(L, s)
       const on = hh > 0 && k > 0
       const boxed = L.kind === 'boxes'
-      const facade = L.kind === 'facade'
-      const sx = boxed ? s.w : s.place.sx
-      const sz = boxed ? s.d : s.place.sz
-      const sy = boxed ? hh : hh * s.place.invY
+      const p = L.kind === 'facade' ? s.massing : s.place
+      const sx = boxed ? s.w : p.sx
+      const sz = boxed ? s.d : p.sz
+      const sy = boxed ? hh : hh * p.invY
       m[o] = on ? sx * k : 0
       m[o + 5] = on ? sy * k : 0
       m[o + 10] = on ? sz * k : 0
       m[o + 12] = s.x + s.w / 2
       m[o + 14] = s.z + s.d / 2
-      // Facades take their drawn footprint (the template is centred on it); the rest keep the file's own.
-      b.aSize.setXYZ(l, facade ? sx : s.w, hh, facade ? sz : s.d)
+      // A massing takes its drawn footprint (the template is centred on it); the rest keep the file's own.
+      const drawn = L.kind === 'facade'
+      b.aSize.setXYZ(l, drawn ? sx : s.w, hh, drawn ? sz : s.d)
       L.dirtyMatrix = true
     }
     s.writtenH = hh
@@ -624,17 +707,20 @@ export class BuildingField {
 
   private flushColor(i: number): void {
     for (const L of this.layers) {
-      const b = L.batches[L.slotBatch[i]!]!
-      b.aLang.setXYZ(L.slotLocal[i]!, this.colorCur[i * 3]!, this.colorCur[i * 3 + 1]!, this.colorCur[i * 3 + 2]!)
+      const bi = L.slotBatch[i]!
+      if (bi < 0) continue
+      L.batches[bi]!.aLang.setXYZ(L.slotLocal[i]!, this.colorCur[i * 3]!, this.colorCur[i * 3 + 1]!, this.colorCur[i * 3 + 2]!)
       L.dirtyColor = true
     }
   }
 
   private flushGlow(i: number): void {
     for (const L of this.layers) {
-      const b = L.batches[L.slotBatch[i]!]!
+      const bi = L.slotBatch[i]!
+      if (bi < 0) continue
+      const b = L.batches[bi]!
       const l = L.slotLocal[i]!
-      b.aGlow.setX(l, this.glow[i]!)
+      setFx(b, l, this.glow[i]!, this.sel[i]!, this.slots[i]!.shim)
       b.aGlowColor.setXYZ(l, this.glowCol[i * 3]!, this.glowCol[i * 3 + 1]!, this.glowCol[i * 3 + 2]!)
       L.dirtyAttr = true
     }
@@ -642,8 +728,10 @@ export class BuildingField {
 
   private flushSel(i: number): void {
     for (const L of this.layers) {
-      const b = L.batches[L.slotBatch[i]!]!
-      b.aSel.setX(L.slotLocal[i]!, this.sel[i]!)
+      const bi = L.slotBatch[i]!
+      if (bi < 0) continue
+      const b = L.batches[bi]!
+      setFx(b, L.slotLocal[i]!, this.glow[i]!, this.sel[i]!, this.slots[i]!.shim)
       L.dirtyAttr = true
     }
   }
@@ -672,6 +760,7 @@ export class BuildingField {
           b.aGlow.needsUpdate = true
           b.aGlowColor.needsUpdate = true
           b.aSel.needsUpdate = true
+          b.aFx.needsUpdate = true
         }
         L.dirtyAttr = false
       } else if (what === 'color' && L.dirtyColor) {
@@ -682,29 +771,28 @@ export class BuildingField {
   }
 }
 
-/** Facade template geometry, built once per template and shared by every field. */
-const templateSources = new Map<string, BufferGeometry>()
+/** Massing template geometry, built once per template and shared by every field (positions, normals, index). */
+const massingSources = new Map<string, BufferGeometry>()
 
-function templateGeometry(id: string): BufferGeometry {
-  let src = templateSources.get(id)
+function massingGeometry(id: string): BufferGeometry {
+  let src = massingSources.get(id)
   if (!src) {
     const t = templateById(id)
-    if (!t) throw new Error(`no facade template: ${id}`)
-    const m = buildTemplateMesh(t)
+    if (!t) throw new Error(`no massing template: ${id}`)
+    const m = buildMassingMesh(t)
     src = new BufferGeometry()
     src.setAttribute('position', new BufferAttribute(m.position, 3))
     src.setAttribute('normal', new BufferAttribute(m.normal, 3))
-    src.setAttribute('aFace', new BufferAttribute(m.aFace, 4))
     src.setIndex(new BufferAttribute(m.index, 1))
-    templateSources.set(id, src)
+    massingSources.set(id, src)
   }
   return shareGeometry(src)
 }
 
-/** A geometry for one batch that shares the model's vertex buffers (the model stays cached and unchanged). */
+/** A geometry for one batch that shares the source's vertex buffers (the source stays cached and unchanged). */
 function shareGeometry(src: BufferGeometry): BufferGeometry {
   const g = new BufferGeometry()
-  for (const name of ['position', 'normal', 'uv', 'aWin', 'aFace']) {
+  for (const name of ['position', 'normal', 'uv', 'uv1', 'aWin', 'aFace']) {
     const a = src.getAttribute(name)
     if (a) g.setAttribute(name, a)
   }
@@ -712,6 +800,15 @@ function shareGeometry(src: BufferGeometry): BufferGeometry {
   return g
 }
 
+/** Writes the heat glow, selection and shimmer of one instance: the stylized attributes and the packed aFx. */
+function setFx(b: Batch, l: number, glow: number, sel: number, shim: number): void {
+  b.aGlow.setX(l, glow)
+  b.aSel.setX(l, sel)
+  b.aShim.setX(l, shim)
+  b.aFx.setXYZ(l, glow, sel, shim)
+}
+
+/** One batch: its instanced mesh and every per-instance attribute the building materials read. */
 function makeBatch(geometry: BufferGeometry, material: MeshStandardMaterial, slotIdx: number[]): Batch {
   const n = slotIdx.length
   const attr = (size: number) => new InstancedBufferAttribute(new Float32Array(n * size), size)
@@ -725,16 +822,27 @@ function makeBatch(geometry: BufferGeometry, material: MeshStandardMaterial, slo
     aGlowColor: attr(3),
     aSel: attr(1),
     aShim: attr(1),
-    aSeed: attr(1)
+    aFx: attr(3),
+    aSeed: attr(1),
+    aFacade: attr(1),
+    aLit: attr(1),
+    aTint: attr(3)
   }
+  batch.aTint.array.fill(1)
   geometry.setAttribute('aSize', batch.aSize)
   geometry.setAttribute('aLang', batch.aLang)
   geometry.setAttribute('aGlow', batch.aGlow)
   geometry.setAttribute('aGlowColor', batch.aGlowColor)
   geometry.setAttribute('aSel', batch.aSel)
   geometry.setAttribute('aShim', batch.aShim)
+  geometry.setAttribute('aFx', batch.aFx)
   geometry.setAttribute('aSeed', batch.aSeed)
+  geometry.setAttribute('aFacade', batch.aFacade)
+  geometry.setAttribute('aLit', batch.aLit)
+  geometry.setAttribute('aTint', batch.aTint)
   batch.mesh = new InstancedMesh(geometry, material, n)
   batch.mesh.frustumCulled = false
+  batch.mesh.castShadow = true
+  batch.mesh.receiveShadow = true
   return batch
 }

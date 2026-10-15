@@ -7,6 +7,7 @@ import type { CityDistrict } from '@shared/types'
 import { useSky } from '../state/store'
 import { notePointerDown } from './registry'
 import { Sky, FOG_HEX, FOG_DENSITY } from './Sky'
+import { Sun } from './Sun'
 import { Atmosphere } from './Atmosphere'
 import { Backdrop } from './Backdrop'
 import { Ground, Districts } from './Ground'
@@ -109,6 +110,7 @@ export default function CityCanvas() {
           }}
         />
         <Sky />
+        <Sun />
         <Environment />
         <Backdrop />
         <Atmosphere />

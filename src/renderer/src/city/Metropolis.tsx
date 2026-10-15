@@ -1,20 +1,25 @@
-// Metropolis: the endless city beyond the repo's square. The plan (metro.ts) lists the buildings, parks and light lines;
-// this file turns them into a few dozen instanced meshes. Each (band, massing) group is one draw: stepped crowns, setbacks,
-// podiums, L-plans and spires in the near band, slabs and setbacks farther out. One facade shader carries every building:
-// dark brick, concrete, glass or limestone; a real-scale window grid (floors of 0.16 units, panes 0.12 to 0.2 across) that
-// fades to the building's average light once the panes fall under about 1.5 pixels; per-building lit share, office towers
-// and half-lit blocks; dark roofs with warm vents; and the fog. Light lines (avenues and streets), parks and the warm
-// horizon band are one draw call each. Built once per repo name and layout size; nothing is allocated per frame.
-import { useEffect, useMemo } from 'react'
+// Metropolis: the endless city beyond the repo's square. The plan (metro.ts) lists the buildings, parks, kit landmarks
+// and light lines; this file turns them into a few dozen instanced meshes. Each (band, massing) group is one draw of
+// unit massings (stepped crowns, setbacks, podiums, L-plans and slabs), each scaled to its lot in metres: the photographic
+// facade material carries them, with the same lit-window and lighting rules as the repo city. The landmarks are the kit
+// towers at their real size, one draw per kit model. Light lines (avenues and streets), parks and the warm horizon band
+// are one draw call each. Built once per repo name and layout size; nothing is allocated per frame.
+import { useEffect, useMemo, useState } from 'react'
 import {
   BoxGeometry, BufferGeometry, Color, CylinderGeometry, DoubleSide, InstancedBufferAttribute, InstancedMesh, Matrix4,
-  Mesh, Quaternion, ShaderMaterial, Vector3, AdditiveBlending, Float32BufferAttribute, BufferAttribute, Points, PointsMaterial
+  Mesh, Quaternion, ShaderMaterial, Vector3, AdditiveBlending, Float32BufferAttribute, BufferAttribute, Points, PointsMaterial,
+  type MeshStandardMaterial
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { CITY_SIZE } from '@shared/layout'
 import { useSky } from '../state/store'
 import { FOG_HEX, skyTime } from './Sky'
-import { GRID_ANGLE, HAZE_DENSITY, buildMetro, type Massing, type MetroGroup, type MetroPlan, type LotSet } from './metro'
+import { GRID_ANGLE, HAZE_DENSITY, buildMetro, type Landmark, type Massing, type MetroGroup, type MetroPlan, type LotSet } from './metro'
+import { createFacadeMaterial, createKitOverlayMaterial, attachInstanceAttributes, neutralInstanceAttributes } from './buildingShader'
+import { lightingUniforms } from './lighting'
+import { loadFacadeAtlas } from './facade/photo/atlas'
+import { setFacadeAtlas } from './facade/photo/material'
+import { loadKit, applyKitTextures, type KitData } from './kit'
 
 const LIGHT_Y = 0.12
 const PARK_Y = 0.05
@@ -69,8 +74,11 @@ const QUARTER = Math.PI / 2
 const Q_PLAIN = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), GRID_ANGLE)
 const Q_TURNED = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), GRID_ANGLE + QUARTER)
 
-/** One instanced mesh of buildings. Each lot carries its footprint, seed, turn and facade style as instance attributes. */
-function lotMesh(geo: BufferGeometry, set: LotSet, mat: ShaderMaterial): InstancedMesh {
+/**
+ * One instanced mesh of lots. Each lot carries its size in world units (aSize: the massing is scaled to it, so the facade
+ * UVs come out in metres), its seed, lit share and facade set, and the neutral overlay attributes.
+ */
+function lotMesh(geo: BufferGeometry, set: LotSet, mat: MeshStandardMaterial): InstancedMesh {
   const mesh = new InstancedMesh(geo, mat, Math.max(1, set.count))
   const m = new Matrix4()
   const p = new Vector3()
@@ -83,131 +91,63 @@ function lotMesh(geo: BufferGeometry, set: LotSet, mat: ShaderMaterial): Instanc
   }
   mesh.count = set.count
   mesh.instanceMatrix.needsUpdate = true
-  geo.setAttribute('aSize', new InstancedBufferAttribute(set.size, 3))
-  geo.setAttribute('aSeed', new InstancedBufferAttribute(set.seed, 1))
-  geo.setAttribute('aStyle', new InstancedBufferAttribute(set.style, 4))
+  const attrs = neutralInstanceAttributes(set.count)
+  attrs.aSize!.array.set(set.size)
+  attrs.aSeed!.array.set(set.seed)
+  attrs.aFacade!.array.set(Float32Array.from(set.facade))
+  for (let i = 0; i < set.count; i++) attrs.aLit!.array[i] = set.style[i * 4]!
+  attachInstanceAttributes(geo, attrs)
   mesh.frustumCulled = false
+  mesh.castShadow = true
+  mesh.receiveShadow = true
   return mesh
 }
 
-// ---- Facade shader ---------------------------------------------------------------------------------------
-
-const FACADE_VERT = `
-attribute vec3 aSize;
-attribute float aSeed;
-attribute vec4 aStyle;
-varying vec3 vLocal;
-varying vec3 vN;
-varying vec3 vWN;
-varying vec3 vW;
-varying float vSeed;
-varying float vUnitY;
-varying float vHgt;
-varying vec4 vStyle;
-void main() {
-  vLocal = position * aSize;
-  vN = normal;
-  vWN = normalize(mat3(instanceMatrix) * normal);
-  vSeed = aSeed;
-  vStyle = aStyle;
-  vUnitY = position.y;
-  vHgt = aSize.y;
-  vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.0);
-  vW = w.xyz;
-  gl_Position = projectionMatrix * viewMatrix * w;
-}`
-
-const FACADE_FRAG = `
-uniform float uFogK;
-uniform vec3 uHaze;
-uniform float uWinGain;
-uniform float uNight;
-varying vec3 vLocal;
-varying vec3 vN;
-varying vec3 vWN;
-varying vec3 vW;
-varying float vSeed;
-varying float vUnitY;
-varying float vHgt;
-varying vec4 vStyle;
-float h21(vec2 p) {
-  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-void main() {
-  vec3 n = normalize(vN);
-  float sd = vSeed * 97.0;
-  // Dark neutral walls: brick (brown-red), grey concrete, blue-black glass, dark limestone. Each varies per building.
-  float pal = vStyle.z;
-  vec3 wall = pal < 0.5 ? vec3(0.085, 0.040, 0.032)
-    : pal < 1.5 ? vec3(0.062, 0.062, 0.066)
-    : pal < 2.5 ? vec3(0.020, 0.026, 0.042)
-    : vec3(0.078, 0.072, 0.062);
-  wall *= 0.8 + 0.4 * h21(vec2(vSeed * 11.3, 1.7));
-
-  // Window grid at real scale: floors of 0.16 world units, panes across the face at a pitch of 0.12 to 0.2.
-  bool sideX = abs(n.x) > 0.5;
-  float along = sideX ? vLocal.z : vLocal.x;
-  float pitch = mix(0.12, 0.2, vStyle.y);
-  vec2 g = vec2(along / pitch, vLocal.y / 0.16);
-  vec2 cell = floor(g);
-  vec2 f = fract(g);
-  vec2 fw = fwidth(g);
-  float pxc = max(fw.x, fw.y);
-  // Panes under about 1.5 pixels average out to the building's mean light: no moire, no speckle, no white squares.
-  float aa = 1.0 - smoothstep(0.35, 0.7, pxc);
-  float winX = smoothstep(0.2 - fw.x, 0.2 + fw.x, f.x) * (1.0 - smoothstep(0.8 - fw.x, 0.8 + fw.x, f.x));
-  float winY = smoothstep(0.24 - fw.y, 0.24 + fw.y, f.y) * (1.0 - smoothstep(0.8 - fw.y, 0.8 + fw.y, f.y));
-  float pane = winX * winY;
-
-  // Lit share: per building, with half-lit blocks (lower part lit) and dark blocks already in the style.
-  float dens = vStyle.x;
-  float kind = vStyle.w;
-  float halfLit = step(2.5, kind) * step(kind, 3.5);
-  float cut = 0.3 + 0.5 * h21(vec2(sd, 4.0));
-  dens = mix(dens, mix(0.5, 0.03, step(cut, vLocal.y / max(vHgt, 1.0))), halfLit);
-  float r = h21(cell + sd);
-  // Whole floors lit in runs now and then.
-  float run = step(0.9, h21(vec2(cell.y, sd + 3.0))) * step(0.5, dens);
-  float lit = max(step(r, dens), run);
-  // Office towers: most panes lit.
-  if (kind > 0.5 && kind < 1.5) lit = max(lit, step(0.3, r));
-
-  // Warm 2400 to 3200 K (#ffd9a0 and #ffc27a) 72 %, cool white 20 %, TV blue 8 %; each pane varies by 30 %.
-  float kc = h21(cell * 1.3 + sd + 4.0);
-  vec3 warm = mix(vec3(1.0, 0.851, 0.627), vec3(1.0, 0.761, 0.478), h21(cell + sd + 9.0));
-  vec3 winCol = kc < 0.72 ? warm : (kc < 0.92 ? vec3(0.82, 0.9, 1.0) : vec3(0.35, 0.55, 1.0));
-  float inten = 0.7 + 0.6 * h21(cell * 2.1 + sd + 5.0);
-  // Single panes stay below 1.2. The far average (the same panes, averaged over a cell) is boosted at night.
-  vec3 paneCol = winCol * inten * 0.85 * lit * pane;
-  vec3 avg = dens * 0.336 * vec3(0.93, 0.74, 0.5) * 0.85 * uWinGain;
-  vec3 col = wall + mix(avg, paneCol, aa);
-
-  // Roofs: dark tar with small warm vents as emissive specks (faded where a vent is under a pixel). The derivatives are
-  // taken outside the branch, so every fragment of a quad shares them.
-  vec2 vc = vLocal.xz / 0.9;
-  vec2 vcell = floor(vc);
-  vec2 vf = fract(vc) - 0.5;
-  vec2 vfwv = fwidth(vc);
-  float vfw = max(vfwv.x, vfwv.y);
-  if (n.y > 0.5) {
-    vec3 tar = vec3(0.016, 0.016, 0.02) * (0.7 + 0.8 * h21(vec2(vSeed * 13.0, 2.0)));
-    float vent = step(0.6, h21(vcell + vSeed * 31.0)) * (1.0 - smoothstep(0.06, 0.12, length(vf)));
-    vent *= 1.0 - smoothstep(0.3, 0.6, vfw);
-    col = tar + vec3(1.0, 0.6, 0.3) * vent * 0.8;
+/**
+ * One instanced mesh per kit model of the landmarks, at real size: the kit geometry is already in world units, so an
+ * instance is a turn and a translation. The kit geometry's vertex buffers are shared, not copied.
+ */
+function landmarkMeshes(landmarks: readonly Landmark[], kit: KitData, mat: MeshStandardMaterial): InstancedMesh[] {
+  const byKit = new Map<string, Landmark[]>()
+  for (const lm of landmarks) {
+    let list = byKit.get(lm.kit)
+    if (!list) byKit.set(lm.kit, (list = []))
+    list.push(lm)
   }
-  // Tall lots: a thin lit crown on about 15 % of them.
-  float crownGate = step(0.85, h21(vec2(vSeed * 71.0, 9.0)));
-  float tallC = smoothstep(80.0, 160.0, vHgt);
-  float crown = smoothstep(0.93, 0.995, vUnitY) * tallC * crownGate * (1.0 - abs(n.y)) * 0.35;
-  col += vec3(1.0, 0.7, 0.4) * crown;
-
-  vec3 V = normalize(cameraPosition - vW);
-  float rim = pow(1.0 - abs(dot(normalize(vWN), V)), 3.0);
-  col += vec3(0.5, 0.28, 0.12) * rim * 0.1;
-  float dist = length(vW - cameraPosition);
-  float fog = 1.0 - exp(-pow(dist * uFogK, 2.0));
-  gl_FragColor = vec4(mix(col, uHaze, fog), 1.0);
-}`
+  const out: InstancedMesh[] = []
+  const m = new Matrix4()
+  const p = new Vector3()
+  const one = new Vector3(1, 1, 1)
+  for (const [id, list] of byKit) {
+    const src = kit.buildings.get(id)
+    if (!src) continue
+    const g = new BufferGeometry()
+    for (const name of ['position', 'normal', 'uv', 'uv1']) {
+      const a = src.geometry.getAttribute(name)
+      if (a) g.setAttribute(name, a)
+    }
+    if (src.geometry.index) g.setIndex(src.geometry.index)
+    const mesh = new InstancedMesh(g, mat, list.length)
+    const attrs = neutralInstanceAttributes(list.length)
+    list.forEach((lm, i) => {
+      p.set(lm.x, 0, lm.z)
+      m.compose(p, lm.rot ? Q_TURNED : Q_PLAIN, one)
+      mesh.setMatrixAt(i, m)
+      attrs.aSize!.setXYZ(i, lm.w, lm.h, lm.d)
+      attrs.aSeed!.setX(i, lm.seed)
+      attrs.aLit!.setX(i, lm.lit)
+    })
+    mesh.instanceMatrix.needsUpdate = true
+    attachInstanceAttributes(g, attrs)
+    mesh.count = list.length
+    mesh.name = `metro-landmark-${id}`
+    mesh.frustumCulled = false
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    out.push(mesh)
+  }
+  return out
+}
 
 // ---- Light lines -----------------------------------------------------------------------------------------
 
@@ -348,7 +288,7 @@ function parkGeometry(plan: MetroPlan): BufferGeometry {
   return g
 }
 
-function buildMetropolis(plan: MetroPlan, facade: ShaderMaterial): Built {
+function buildMetropolis(plan: MetroPlan, facade: MeshStandardMaterial): Built {
   const meshes: InstancedMesh[] = []
   const geos: BufferGeometry[] = []
   for (const grp of plan.groups as MetroGroup[]) {
@@ -366,21 +306,44 @@ export function Metropolis() {
   const repoTop = useSky((s) => (s.layout?.buildings ?? []).reduce((m, b) => Math.max(m, b.h), 0))
   const plan = useMemo(() => buildMetro({ name, half: size / 2, repoTop }), [name, size, repoTop])
 
-  const facade = useMemo(() => new ShaderMaterial({
-    uniforms: {
-      uFogK: { value: HAZE_DENSITY },
-      uHaze: { value: new Color(METRO_HAZE) },
-      uWinGain: { value: 1.0 },
-      uNight: { value: 1.0 }
-    },
-    vertexShader: FACADE_VERT,
-    fragmentShader: FACADE_FRAG
-  }), [])
+  // One photographic facade and one kit material for the whole far city: the same lighting as the repo city (by
+  // reference, from lighting.ts), and the far city's haze instead of the scene fog.
+  const shared = useMemo(() => ({ time: skyTime, tint: { value: 0 } }), [])
+  const haze = useMemo(() => ({ color: new Color(METRO_HAZE), k: HAZE_DENSITY }), [])
+  const facade = useMemo(() => createFacadeMaterial(shared, haze), [shared, haze])
+  const kitMat = useMemo(() => createKitOverlayMaterial(shared, haze), [shared, haze])
+  const [kit, setKit] = useState<KitData | null>(null)
+
+  useEffect(() => {
+    let live = true
+    loadFacadeAtlas()
+      .then((atlas) => {
+        if (live) setFacadeAtlas(facade, atlas)
+      })
+      .catch((err: unknown) => console.warn('metropolis facades unavailable', err))
+    return () => {
+      live = false
+    }
+  }, [facade])
+
+  useEffect(() => {
+    let live = true
+    loadKit()
+      .then((k) => {
+        if (!live) return
+        applyKitTextures(kitMat, k.textures)
+        setKit(k)
+      })
+      .catch((err: unknown) => console.warn('metropolis landmarks unavailable', err))
+    return () => {
+      live = false
+    }
+  }, [kitMat])
 
   const lines = useMemo(() => {
     const geo = lineGeometry(plan)
     const mat = new ShaderMaterial({
-      uniforms: { uTime: skyTime, uFogK: { value: HAZE_DENSITY }, uHaze: { value: new Color(METRO_HAZE) }, uNight: { value: 1.0 } },
+      uniforms: { uTime: skyTime, uFogK: { value: HAZE_DENSITY }, uHaze: { value: new Color(METRO_HAZE) }, uNight: lightingUniforms.uNight },
       vertexShader: LINE_VERT,
       fragmentShader: LINE_FRAG,
       transparent: true,
@@ -431,7 +394,7 @@ export function Metropolis() {
     const sparkles = new Points(ig, imat)
     sparkles.frustumCulled = false
     return { mesh, geo, mat, lamps, lg, lmat, sparkles, ig, imat }
-  }, [plan])
+  }, [plan, size])
 
   const horizon = useMemo(() => {
     const geo = new CylinderGeometry(HORIZON_R, HORIZON_R, HORIZON_H, 96, 1, true)
@@ -452,18 +415,14 @@ export function Metropolis() {
   }, [])
 
   const built = useMemo(() => buildMetropolis(plan, facade), [plan, facade])
-  // Night boosts the far window average (x1.6); the other presets keep the base level.
-  const night = useSky((s) => s.timeOfDay === 'night')
-  useEffect(() => {
-    // The far average of the windows is the warm carpet of light: stronger at night, moderate at blue hour.
-    facade.uniforms.uNight!.value = night ? 1.6 : 1.0
-    facade.uniforms.uWinGain!.value = night ? 3.9 : 2.07
-    lines.mat.uniforms.uNight!.value = night ? 1.6 : 1.0
-  }, [night, facade, lines])
+  const landmarks = useMemo(() => (kit ? landmarkMeshes(plan.landmarks, kit, kitMat) : []), [plan, kit, kitMat])
 
   useEffect(() => () => {
     built.geos.forEach((g) => g.dispose())
   }, [built])
+  useEffect(() => () => {
+    landmarks.forEach((m) => m.geometry.dispose())
+  }, [landmarks])
   useEffect(() => () => {
     lines.geo.dispose()
     lines.mat.dispose()
@@ -480,11 +439,15 @@ export function Metropolis() {
     horizon.geo.dispose()
     horizon.mat.dispose()
   }, [horizon])
-  useEffect(() => () => facade.dispose(), [facade])
+  useEffect(() => () => {
+    facade.dispose()
+    kitMat.dispose()
+  }, [facade, kitMat])
 
   return (
     <>
       {built.meshes.map((m, i) => <primitive key={i} object={m} />)}
+      {landmarks.map((m) => <primitive key={m.name} object={m} />)}
       <primitive object={parks.mesh} />
       <primitive object={parks.lamps} />
       <primitive object={parks.sparkles} />

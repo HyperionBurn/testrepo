@@ -16,6 +16,7 @@ import { useSky } from '../state/store'
 import {
   COLOR_KEYS, LEVEL_KEYS, PresetTransition, type ColorKey, type LevelKey, type ResolvedPreset
 } from './skyPresets'
+import { lightingUniforms } from './lighting'
 
 /** Fog colour at blue hour. The live fog follows the horizon of the current preset (see Sky below). */
 export const FOG_HEX = '#3a4c74'
@@ -119,6 +120,8 @@ uniform float uMoonSize;
 uniform float uShootT0;
 uniform float uShootLen;
 uniform float uShootOn;
+uniform vec3 uSunDir;
+uniform vec3 uKey;
 varying vec3 vDir;
 ${NOISE_GLSL}
 void main() {
@@ -143,6 +146,16 @@ void main() {
   vec3 wp = vec3(d.x * 2.2, d.y * 7.0, d.z * 2.2) + vec3(uTime * 0.006, 0.0, uTime * 0.003);
   float wisp = smoothstep(0.56, 0.9, fbm3(wp));
   col = mix(col, uWisp, wisp * wband * uWisps * 0.6);
+
+  // Sun (golden hour): a warm haze that thickens toward the sun, a halo and a small disc, all at uSunDir (lighting.ts).
+  // Off while the sun is below the horizon, so blue hour and night keep their sky.
+  float sunUp = smoothstep(0.0, 0.05, uSunDir.y);
+  float cs = clamp(dot(d, uSunDir), -1.0, 1.0);
+  float th = acos(cs);
+  vec3 sunTint = mix(uKey, vec3(1.0, 0.96, 0.88), 0.45);
+  col = mix(col, uKey * 1.05, pow(max(cs, 0.0), 10.0) * 0.35 * sunUp);
+  col += sunTint * (exp(-th * 5.0) * 0.26 + exp(-th * 18.0) * 0.45) * sunUp;
+  col += sunTint * (1.0 - smoothstep(0.0075, 0.0095, th)) * 3.0 * sunUp;
 
   if (uDetail > 0.5) {
     // Small moon: a faint corona and a cratered disc with limb darkening. Fades with the preset.
@@ -191,7 +204,9 @@ export function makeSkyMaterial(detail = true): ShaderMaterial {
       uShootB: { value: new Vector3(0, 1, 0) },
       uShootT0: { value: -100 },
       uShootLen: { value: 1.4 },
-      uShootOn: { value: 0 }
+      uShootOn: { value: 0 },
+      uSunDir: lightingUniforms.uSunDir,
+      uKey: colorU.key
     },
     vertexShader: DOME_VERT,
     fragmentShader: SKY_FRAG,
