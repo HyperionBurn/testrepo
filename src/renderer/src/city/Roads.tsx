@@ -13,6 +13,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { CityLayout } from '@shared/types'
 import { useSky } from '../state/store'
+import { NIGHT_MIX_GLSL, gateNightMaterial, lightingUniforms } from './lighting'
 import { loadModels, type LoadedModel } from './assets'
 import { FOG_DENSITY, FOG_HEX } from './Sky'
 import { buildRoadPlan, lampArmDirection, lampTransform, ROAD_Y, type RoadPlan, type RoadTile } from './streets'
@@ -59,6 +60,8 @@ uniform sampler2D uGlow;
 uniform float uSize;
 uniform float uFade;
 uniform float uWet;
+uniform float uNight;
+${NIGHT_MIX_GLSL}
 uniform vec3 uCam;
 uniform vec3 uFog;
 uniform float uDensity;
@@ -117,7 +120,8 @@ void main() {
     streak += texture2D(uGlow, (q + 0.5 * uSize) / uSize).r * (1.0 - fk / 6.0);
   }
   vec3 skyRefl = mix(vec3(0.03, 0.05, 0.10), vec3(0.45, 0.22, 0.08), pow(1.0 - cosT, 4.0));
-  vec3 reflCol = sodium * streak * 0.55 + skyRefl;
+  // The lamp streaks in the puddles are night light too; by day the puddles only reflect the sky.
+  vec3 reflCol = sodium * streak * 0.55 * mix(0.05, 1.0, nightMix(uNight)) + skyRefl;
 
   vec3 col = base * (1.0 - 0.55 * puddle);
   col += puddle * uWet * fres * reflCol * 1.6;
@@ -135,6 +139,8 @@ uniform sampler2D uSurf;
 uniform sampler2D uGlow;
 uniform float uSize;
 uniform float uFade;
+uniform float uNight;
+${NIGHT_MIX_GLSL}
 varying vec3 vW;
 void main() {
   vec2 uv = (vW.xz + 0.5 * uSize) / uSize;
@@ -142,6 +148,8 @@ void main() {
   if (s.r < 0.5) discard;
   vec4 g = texture2D(uGlow, uv);
   float k = g.b * 1.25 + g.r * 0.8 + g.a * 0.55 + g.g * 0.9;
+  // Lamp pools and sodium bands are night light: a faint floor by day, full strength at night.
+  k *= mix(0.06, 1.0, nightMix(uNight));
   vec3 warm = vec3(1.0, 0.42, 0.12);
   gl_FragColor = vec4(warm * k * uFade, 1.0);
 }`
@@ -204,6 +212,7 @@ function buildProcedural(layout: CityLayout, plan: RoadPlan, maxAniso = 1): Proc
       uSize: { value: raster.size },
       uFade: { value: 1 },
       uWet: { value: 1 },
+      uNight: lightingUniforms.uNight,
       uCam: { value: new Vector3() },
       uFog: { value: new Color(FOG_HEX) },
       uDensity: { value: FOG_DENSITY }
@@ -225,7 +234,7 @@ function buildProcedural(layout: CityLayout, plan: RoadPlan, maxAniso = 1): Proc
   mesh.name = 'road-surface'
   root.add(mesh)
   const glow = new ShaderMaterial({
-    uniforms: { uSurf: { value: tex.surface }, uGlow: { value: tex.glow }, uSize: { value: raster.size }, uFade: { value: 1 } },
+    uniforms: { uSurf: { value: tex.surface }, uGlow: { value: tex.glow }, uSize: { value: raster.size }, uFade: { value: 1 }, uNight: lightingUniforms.uNight },
     vertexShader: SURF_VERT,
     fragmentShader: GLOW_FRAG,
     transparent: true,
@@ -245,13 +254,14 @@ function buildProcedural(layout: CityLayout, plan: RoadPlan, maxAniso = 1): Proc
 
   // Lamps: poles and heads, the head glow, and the glow points.
   const pole = new MeshStandardMaterial({ color: '#2a2e38', roughness: 0.55, metalness: 0.4, transparent: true, opacity: 1 })
-  const headMat = new MeshBasicMaterial({ color: new Color(2.4, 1.9, 1.3), toneMapped: false, transparent: true, opacity: 1 })
+  // Lamp heads: lit bulbs at night, dull glass by day.
+  const headMat = gateNightMaterial(new MeshBasicMaterial({ color: new Color(2.4, 1.9, 1.3), toneMapped: false, transparent: true, opacity: 1 }), 0.45)
   const glowTex = glowTexture()
-  const glowMat = new PointsMaterial({
+  const glowMat = gateNightMaterial(new PointsMaterial({
     map: glowTex, size: 6, sizeAttenuation: true, vertexColors: true,
     transparent: true, opacity: 1, depthWrite: false,
     blending: AdditiveBlending, toneMapped: false
-  })
+  }), 0.08)
   const cobra = cobraGeometry()
   const bulb = new BoxGeometry(0.085, 0.012, 0.075).translate(0, HEAD_Y - 0.004, -ARM_REACH)
   const m4 = new Matrix4()
@@ -330,11 +340,11 @@ function buildKenney(plan: RoadPlan, models: ReadonlyMap<string, LoadedModel>, i
     transparent: true, opacity: instant ? 1 : 0
   })
   const glowTex = glowTexture()
-  const glow = new PointsMaterial({
+  const glow = gateNightMaterial(new PointsMaterial({
     map: glowTex, size: 7, sizeAttenuation: true, vertexColors: true,
     transparent: true, opacity: instant ? 1 : 0, depthWrite: false,
     blending: AdditiveBlending, toneMapped: false
-  })
+  }), 0.08)
 
   const root = new Group()
   root.name = 'skyline-roads'

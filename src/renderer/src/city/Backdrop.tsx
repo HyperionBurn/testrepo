@@ -1,13 +1,13 @@
-// Backdrop: the far horizon beyond the metropolis. Two rings of dark low-poly ridges (the Palisades across the Hudson, the
-// hills past the island) at 1900 and 1980 units, fogged into the haze so they read as a silhouette above the warm band.
-// The towers that used to fill this ring now come from Metropolis, and the aviation beacons moved to the beacon module.
-// One draw call.
+// Backdrop: the far horizon beyond the metropolis. Two rings of low ridges (the Palisades across the Hudson, the hills past
+// the island) at 1900 and 1980 units. They are aerial-perspective silhouettes, not solid hills: their colour comes from the
+// live fog and haze (colorU, so they follow the time of day), warm grey-gold toward the sun and cool grey-blue away from it,
+// and distance pulls them almost all the way into that haze. The towers that fill this ring come from Metropolis. The
+// aviation beacons live in Rooftops. One draw call.
 import { useEffect, useMemo } from 'react'
-import { BufferAttribute, BufferGeometry, Color, DoubleSide, ShaderMaterial } from 'three'
-import { mulberry32 } from './Sky'
+import { BufferAttribute, BufferGeometry, DoubleSide, ShaderMaterial } from 'three'
+import { colorU, mulberry32 } from './Sky'
 import { HAZE_DENSITY } from './metro'
-
-const HORIZON = '#1a2a52'
+import { lightingUniforms } from './lighting'
 
 const RIDGE_VERT = `
 attribute float aLayer;
@@ -24,20 +24,26 @@ void main() {
 }`
 
 const RIDGE_FRAG = `
-uniform vec3 uNear;
-uniform vec3 uFar;
-uniform vec3 uHorizon;
+uniform vec3 uFog;
+uniform vec3 uHaze;
+uniform vec3 uSunDir;
 uniform float uFogDensity;
 varying float vLayer;
 varying float vH;
 varying vec3 vW;
 void main() {
-  vec3 col = mix(uNear, uFar, vLayer);
-  // Faint lift on the crests from the city's glow.
-  col += vec3(0.05, 0.1, 0.16) * smoothstep(0.6, 1.0, vH) * (0.6 + 0.4 * vLayer);
+  // Sun-facing haze: warm gold where the view points at the sun, cool grey-blue away from it.
+  vec3 toRidge = normalize(vW - cameraPosition);
+  float sunward = smoothstep(-0.2, 0.9, dot(toRidge, uSunDir));
+  vec3 warm = mix(uFog, uHaze, 0.35) * vec3(1.0, 0.94, 0.86);
+  vec3 cool = uFog * vec3(0.8, 0.86, 0.96);
+  vec3 haze = mix(cool, warm, sunward);
+  // The silhouette is a little darker than the haze behind it; the far ring is paler still.
+  vec3 col = mix(haze * 0.82, haze * 0.9, vLayer);
+  col += vec3(0.02, 0.02, 0.025) * smoothstep(0.6, 1.0, vH);
   float dist = length(vW - cameraPosition);
   float fog = 1.0 - exp(-pow(dist * uFogDensity, 2.0));
-  gl_FragColor = vec4(mix(col, uHorizon, fog), 1.0);
+  gl_FragColor = vec4(mix(col, haze, fog), 1.0);
 }`
 
 /** Two rings of low-poly ridges beyond the metropolis: a near range and a farther, paler one. */
@@ -49,8 +55,8 @@ function makeRidges(): BufferGeometry {
   const idx: number[] = []
   const SEG = 180
   const layers = [
-    { r: 1900, base: 30, amp: 220, layer: 0 },
-    { r: 1980, base: 50, amp: 320, layer: 1 }
+    { r: 1900, base: 12, amp: 150, layer: 0 },
+    { r: 1980, base: 20, amp: 210, layer: 1 }
   ]
   for (const L of layers) {
     // Ridged harmonics: sharp crests from 1 - |sin|, with a seeded jitter per vertex.
@@ -97,10 +103,11 @@ export function Backdrop() {
   const ridgeGeo = useMemo(() => makeRidges(), [])
   const ridgeMat = useMemo(() => new ShaderMaterial({
     uniforms: {
-      uNear: { value: new Color('#0a1130') },
-      uFar: { value: new Color('#16295a') },
-      uHorizon: { value: new Color(HORIZON) },
-      uFogDensity: { value: HAZE_DENSITY * 0.8 }
+      uFog: colorU.fog,
+      uHaze: colorU.haze,
+      uSunDir: lightingUniforms.uSunDir,
+      // Pulls the ridges most of the way into the haze at ~1900 units, leaving a faint silhouette.
+      uFogDensity: { value: HAZE_DENSITY * 0.6 }
     },
     vertexShader: RIDGE_VERT,
     fragmentShader: RIDGE_FRAG,

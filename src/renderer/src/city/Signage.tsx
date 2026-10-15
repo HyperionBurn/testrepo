@@ -12,6 +12,7 @@ import {
 } from 'three'
 import type { AgentInfo, AgentEvent } from '@shared/types'
 import { useSky } from '../state/store'
+import { NIGHT_MIX_GLSL, lightingUniforms } from './lighting'
 import { signsFor, skylineCounts } from './roofs'
 import { ATLAS_COUNT, SLOTS_PER_ATLAS, type SignPlan, type SignSpec } from './signs'
 
@@ -187,6 +188,8 @@ const BILLBOARD_FRAG = `
 uniform sampler2D uMap;
 uniform float uTime;
 uniform float uStatic;
+uniform float uNight;
+${NIGHT_MIX_GLSL}
 varying vec2 vUv;
 varying vec4 vSlot;
 varying float vSeed;
@@ -228,7 +231,8 @@ void main() {
   float edge = min(min(lu.x, 1.0 - lu.x), min(lu.y, 1.0 - lu.y));
   col = mix(vec3(0.16, 0.2, 0.3), col, smoothstep(0.0, 0.025, edge));
   float fl = uStatic > 0.5 ? 1.0 : 0.95 + 0.05 * step(0.5, h21(vec2(floor(uTime * 9.0), vSeed * 100.0)));
-  gl_FragColor = vec4(col * 1.35 * fl, 1.0);
+  // Billboards stay visible by day at about half their night brightness, so they read as signs, not light sources.
+  gl_FragColor = vec4(col * 1.35 * fl * mix(0.5, 1.0, nightMix(uNight)), 1.0);
 }`
 
 const NEON_VERT = `
@@ -253,6 +257,8 @@ void main() {
 const NEON_FRAG = `
 uniform float uTime;
 uniform float uStatic;
+uniform float uNight;
+${NIGHT_MIX_GLSL}
 varying vec2 vUv;
 varying vec3 vColor;
 varying float vMode;
@@ -287,7 +293,8 @@ void main() {
     float covM = mix(dot * on, 0.16, smoothstep(0.3, 0.7, max(fwM.x, fwM.y)));
     col = vColor * (covM * 2.4 + 0.05);
   }
-  gl_FragColor = vec4(col, 1.0);
+  // Neon tubes and marquees are lit at night; by day they are dark glass.
+  gl_FragColor = vec4(col * mix(0.3, 1.0, nightMix(uNight)), 1.0);
 }`
 
 interface SignGroup {
@@ -320,7 +327,7 @@ function buildSignMeshes(plan: SignPlan, atlases: Atlas[], shared: { uTime: { va
     geo.setAttribute('aSlot', new InstancedBufferAttribute(slot, 4))
     geo.setAttribute('aSeed', new InstancedBufferAttribute(seed, 1))
     const mat = new ShaderMaterial({
-      uniforms: { uMap: { value: atlases[a]!.tex as Texture }, uTime: shared.uTime, uStatic: shared.uStatic },
+      uniforms: { uMap: { value: atlases[a]!.tex as Texture }, uTime: shared.uTime, uStatic: shared.uStatic, uNight: lightingUniforms.uNight },
       vertexShader: SHARED_VERT,
       fragmentShader: BILLBOARD_FRAG,
       side: DoubleSide
@@ -356,7 +363,7 @@ function buildSignMeshes(plan: SignPlan, atlases: Atlas[], shared: { uTime: { va
     geo.setAttribute('aSize', new BufferAttribute(size, 2))
     geo.setAttribute('aSeed', new BufferAttribute(seed, 1))
     const mat = new ShaderMaterial({
-      uniforms: { uTime: shared.uTime, uStatic: shared.uStatic },
+      uniforms: { uTime: shared.uTime, uStatic: shared.uStatic, uNight: lightingUniforms.uNight },
       vertexShader: NEON_VERT,
       fragmentShader: NEON_FRAG,
       side: DoubleSide

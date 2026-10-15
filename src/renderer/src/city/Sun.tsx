@@ -94,7 +94,7 @@ export function Sun() {
     l.castShadow = true
     l.shadow.mapSize.set(MAP_SIZE, MAP_SIZE)
     // World units are 10 m, so these are small: 0.02 is 20 cm of normal offset, enough for tall thin towers.
-    l.shadow.bias = -0.0004
+    l.shadow.bias = -0.0001
     l.shadow.normalBias = 0.02
     l.shadow.radius = 1.5
     return l

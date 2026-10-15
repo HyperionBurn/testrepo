@@ -8,6 +8,7 @@ import { useFrame } from '@react-three/fiber'
 import { AdditiveBlending, BackSide, PlaneGeometry, ShaderMaterial, SphereGeometry } from 'three'
 import { useSky } from '../state/store'
 import { DOME_VERT, NOISE_GLSL, colorU, levelU, skyTime } from './Sky'
+import { NIGHT_MIX_GLSL, lightingUniforms } from './lighting'
 
 const HAZE_GROUND_FRAG = `
 uniform float uTime;
@@ -16,8 +17,9 @@ uniform float uSpeed;
 uniform float uAlpha;
 uniform float uSeed;
 uniform vec3 uHaze;
+uniform float uNight;
 varying vec3 vW;
-${NOISE_GLSL}
+${NOISE_GLSL}${NIGHT_MIX_GLSL}
 void main() {
   vec2 p = vW.xz;
   float t = uTime * uSpeed;
@@ -28,7 +30,9 @@ void main() {
   // asphalt between the lots stays near black, and it fades out with a long exponential tail (no visible edge).
   float lit = exp(-length(p) * 0.008);
   float edge = exp(-length(p) / 260.0);
-  gl_FragColor = vec4(uHaze * (0.35 + 0.65 * lit), 0.5 * bank * uAlpha * lit * edge);
+  // Sodium haze over the streets is night only; by day the ground haze is a faint veil.
+  float lamp = mix(0.1, 1.0, nightMix(uNight));
+  gl_FragColor = vec4(uHaze * (0.35 + 0.65 * lit), 0.5 * bank * uAlpha * lit * edge * lamp);
 }`
 
 const HAZE_MID_FRAG = `
@@ -59,8 +63,12 @@ uniform float uTime;
 uniform vec3 uHaze;
 uniform float uScatter;
 uniform float uDensity;
+uniform float uNight;
+uniform vec3 uSunDir;
+uniform vec3 uFog;
+uniform vec3 uKey;
 varying vec3 vDir;
-${NOISE_GLSL}
+${NOISE_GLSL}${NIGHT_MIX_GLSL}
 void main() {
   vec3 d = normalize(vDir);
   float h = d.y;
@@ -68,8 +76,13 @@ void main() {
   // Stratified: thin bright layers in the scattering, as in long-exposure city photos.
   float strat = 0.55 + 0.45 * sin(h * 70.0 + fbm3(vec3(cos(az), sin(az), h * 3.0) * 1.4) * 5.0);
   float glow = exp(-max(h, 0.0) * 4.5) * smoothstep(-0.04, 0.03, h);
-  float amt = glow * strat * uScatter * uDensity * 0.22;
-  gl_FragColor = vec4(uHaze * amt, 1.0);
+  // Night: light-pollution scatter in the street haze colour. Day: a faint veil, warmest toward the sun.
+  float night = nightMix(uNight);
+  float sunUp = smoothstep(0.0, 0.05, uSunDir.y);
+  float fwd = pow(max(dot(d, uSunDir), 0.0), 4.0) * sunUp;
+  vec3 lit = mix(uFog * 0.9 + uKey * fwd * 0.6, uHaze, night);
+  float amt = glow * strat * uScatter * uDensity * (0.22 * night + 0.12 + 0.2 * fwd * (1.0 - night));
+  gl_FragColor = vec4(lit * amt, 1.0);
 }`
 
 const CLOUD_FRAG = `
@@ -111,7 +124,8 @@ function makeGroundHaze(b: (typeof FOG_BANKS)[number]): ShaderMaterial {
       uSpeed: { value: b.speed },
       uAlpha: { value: b.alpha },
       uSeed: { value: b.seed },
-      uHaze: colorU.haze
+      uHaze: colorU.haze,
+      uNight: lightingUniforms.uNight
     },
     vertexShader: `varying vec3 vW;
       void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
@@ -149,6 +163,10 @@ export function Atmosphere() {
     uniforms: {
       uTime: skyTime,
       uHaze: colorU.haze,
+      uFog: colorU.fog,
+      uKey: colorU.key,
+      uSunDir: lightingUniforms.uSunDir,
+      uNight: lightingUniforms.uNight,
       uScatter: levelU.scatter,
       uDensity: { value: 0.6 }
     },

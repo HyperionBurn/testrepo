@@ -13,6 +13,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { useSky } from '../state/store'
 import { rooftopsFor, skylineCounts, type Beacon, type RoofItem, type RooftopPlan } from './roofs'
+import { NIGHT_MIX_GLSL, lightingUniforms } from './lighting'
 
 declare global {
   interface Window {
@@ -111,6 +112,8 @@ const BEACON_VERT = `
 uniform float uTime;
 uniform float uPx;
 uniform float uStatic;
+uniform float uNight;
+${NIGHT_MIX_GLSL}
 attribute float aPhase;
 attribute float aRate;
 attribute float aKind;
@@ -123,9 +126,10 @@ void main() {
   float s = 0.5 + 0.5 * sin(6.2831853 * uTime * aRate + aPhase);
   // Aviation beacons: a sharp pulse, mostly dark. Helipad edge lights: a softer blink.
   float b = mix(pow(s, 6.0), smoothstep(0.1, 0.9, s), aKind);
-  vBlink = uStatic > 0.5 ? (aKind < 0.5 ? 0.9 : 0.6) : b;
+  vBlink = (uStatic > 0.5 ? (aKind < 0.5 ? 0.9 : 0.6) : b) * mix(0.35, 1.0, nightMix(uNight));
   vCol = aColor;
-  gl_PointSize = (aKind < 0.5 ? 9.0 : 4.5) * uPx * clamp(260.0 / -mv.z, 0.5, 3.0);
+  // By day a beacon is a small red point: smaller, and only faintly lit (see BEACON_FRAG).
+  gl_PointSize = (aKind < 0.5 ? 9.0 : 4.5) * uPx * clamp(260.0 / -mv.z, 0.5, 3.0) * mix(0.45, 1.0, nightMix(uNight));
 }`
 
 const BEACON_FRAG = `
@@ -182,7 +186,7 @@ function lerpColor(a: Color, b: Color, t: number, out: Color): void {
 interface RooftopGroup {
   group: Group;
   beacons: Points | null;
-  uniforms: { uTime: { value: number }; uPx: { value: number }; uStatic: { value: number } };
+  uniforms: { uTime: { value: number }; uPx: { value: number }; uStatic: { value: number }; uNight: { value: number } };
   dispose: () => void;
 }
 
@@ -204,7 +208,7 @@ export function buildRooftopGroup(plan: RooftopPlan, pixelRatio: number, reduced
     blending: AdditiveBlending,
     side: DoubleSide
   })
-  const uniforms = { uTime: { value: 0 }, uPx: { value: pixelRatio }, uStatic: { value: reduced ? 1 : 0 } }
+  const uniforms = { uTime: { value: 0 }, uPx: { value: pixelRatio }, uStatic: { value: reduced ? 1 : 0 }, uNight: lightingUniforms.uNight }
 
   const tank = instanced(tankGeometry(), solid, plan.tanks, sc,
     (it, out) => out.set(TANK_TONES[Math.floor(it.tone * TANK_TONES.length)] ?? TANK_TONES[0]!))

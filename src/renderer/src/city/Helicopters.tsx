@@ -9,6 +9,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { useSky } from '../state/store'
 import { colouredBox } from './Bridges'
+import { gateNightMaterial, lightingUniforms, nightGate } from './lighting'
 
 interface Heli {
   cx: number; cz: number
@@ -117,7 +118,8 @@ function Fleet() {
     const strobeGeo = new BufferGeometry()
     strobeGeo.setAttribute('position', new BufferAttribute(new Float32Array(N * 2 * 3), 3))
     strobeGeo.setAttribute('color', new Float32BufferAttribute(new Float32Array(N * 2 * 3), 3))
-    const strobeMat = new PointsMaterial({ size: 4.2, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, blending: AdditiveBlending, toneMapped: false })
+    // Strobes stay as small flashes by day (half strength); the spotlight cones below are night only.
+    const strobeMat = gateNightMaterial(new PointsMaterial({ size: 4.2, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, blending: AdditiveBlending, toneMapped: false }), 0.5)
     const strobes = new Points(strobeGeo, strobeMat)
     strobes.frustumCulled = false
 
@@ -155,6 +157,8 @@ function Fleet() {
     const t = clock.current
     const T = built.table
     for (let h = 0; h < N; h++) poseInto(T, h, t)
+    // Searchlights are night only: their cones fade out with the night mix, so no beam crosses the daytime sky.
+    const gate = nightGate(lightingUniforms.uNight.value)
 
     // Bodies: local (x forward, y up, z right) mapped by each helicopter's heading.
     const bp = (built.bodyGeo.getAttribute('position') as BufferAttribute).array as Float32Array
@@ -249,7 +253,7 @@ function Fleet() {
           cc[kv * 4] = 0.85
           cc[kv * 4 + 1] = 0.92
           cc[kv * 4 + 2] = 1
-          cc[kv * 4 + 3] = alpha[q]! * flick
+          cc[kv * 4 + 3] = alpha[q]! * flick * gate
         }
       }
     }

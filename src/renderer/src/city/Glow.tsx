@@ -3,6 +3,7 @@
 // additive disc, depth tested. No per-frame JS.
 import { useEffect, useMemo } from 'react'
 import { AdditiveBlending, Color, PlaneGeometry, ShaderMaterial } from 'three'
+import { NIGHT_MIX_GLSL, lightingUniforms } from './lighting'
 
 /** Radius of the glow disc in world units (it fades to nothing before this). */
 const RADIUS = 1500
@@ -17,6 +18,8 @@ void main() {
 const FRAG = `
 uniform vec3 uWarm;
 uniform float uStrength;
+uniform float uNight;
+${NIGHT_MIX_GLSL}
 varying vec2 vUv;
 void main() {
   // Plane spans 2 * RADIUS, so d is the distance from the city centre in world units.
@@ -27,7 +30,8 @@ void main() {
   float pool = exp(-d / 90.0) * 0.6 + exp(-d / 220.0) * 0.04;
   float fall = 1.0 - smoothstep(360.0, 700.0, d);
   vec3 col = uWarm * pool * fall;
-  gl_FragColor = vec4(col * uStrength, 1.0);
+  // A street-lamp pool: night only. By day the ground shows no lamp light.
+  gl_FragColor = vec4(col * uStrength * nightMix(uNight), 1.0);
 }`
 
 export function GroundGlow() {
@@ -39,7 +43,8 @@ export function GroundGlow() {
   const material = useMemo(() => new ShaderMaterial({
     uniforms: {
       uWarm: { value: new Color('#ff9a4a') },
-      uStrength: { value: 0.12 }
+      uStrength: { value: 0.12 },
+      uNight: lightingUniforms.uNight
     },
     vertexShader: VERT,
     fragmentShader: FRAG,

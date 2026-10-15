@@ -14,6 +14,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { useFrame } from '@react-three/fiber'
 import { useSky } from '../state/store'
 import { BRIDGES, type BridgeSpec } from './metro'
+import { gateNightMaterial } from './lighting'
 
 const SUN = [0.4, 0.8, 0.3] as const
 /** Dark warm stone (brownstone and granite at night), not blue. */
@@ -184,8 +185,19 @@ function cableLines(b: BridgeSpec): { geo: BufferGeometry; points: Float32Array 
   return { geo, points: new Float32Array(lights) }
 }
 
-/** Sodium lamps on both deck edges, plus the cable-light string, as one Points object. */
-function lampPoints(b: BridgeSpec, cable: Float32Array): BufferGeometry {
+/** Points as one geometry: positions and colours. */
+function pointGeo(pos: number[], col: number[]): BufferGeometry {
+  const g = new BufferGeometry()
+  g.setAttribute('position', new Float32BufferAttribute(pos, 3))
+  g.setAttribute('color', new Float32BufferAttribute(col, 3))
+  return g
+}
+
+/**
+ * The deck's sodium lamps (both edges) and the cable-light string, as two Points objects. The lamps keep a dim daytime
+ * floor; the cable lights are night only (see BridgeMesh).
+ */
+function lampPoints(b: BridgeSpec, cable: Float32Array): { deck: BufferGeometry; cable: BufferGeometry } {
   const pos: number[] = []
   const col: number[] = []
   const sodium: [number, number, number] = [1.0, 0.62, 0.26]
@@ -195,14 +207,13 @@ function lampPoints(b: BridgeSpec, cable: Float32Array): BufferGeometry {
       col.push(...sodium)
     }
   }
+  const cpos: number[] = []
+  const ccol: number[] = []
   for (let i = 0; i < cable.length; i += 3) {
-    pos.push(cable[i]!, cable[i + 1]!, cable[i + 2]!)
-    col.push(1.0, 0.86, 0.6)
+    cpos.push(cable[i]!, cable[i + 1]!, cable[i + 2]!)
+    ccol.push(1.0, 0.86, 0.6)
   }
-  const g = new BufferGeometry()
-  g.setAttribute('position', new Float32BufferAttribute(pos, 3))
-  g.setAttribute('color', new Float32BufferAttribute(col, 3))
-  return g
+  return { deck: pointGeo(pos, col), cable: pointGeo(cpos, ccol) }
 }
 
 interface Cars {
@@ -245,15 +256,19 @@ function BridgeMesh({ b, index }: { b: BridgeSpec; index: number }) {
     const cables = cableLines(b)
     const cableMesh = new LineSegments(cables.geo, new LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, toneMapped: false, fog: false }))
     cableMesh.frustumCulled = false
-    const lampGeo = lampPoints(b, cables.points)
-    const lampMat = new PointsMaterial({ size: 3.2, sizeAttenuation: false, vertexColors: true, toneMapped: false, transparent: true, depthWrite: false, blending: AdditiveBlending, fog: false })
-    const lampObj = new Points(lampGeo, lampMat)
+    const lamps = lampPoints(b, cables.points)
+    const lampMat = gateNightMaterial(new PointsMaterial({ size: 3.2, sizeAttenuation: false, vertexColors: true, toneMapped: false, transparent: true, depthWrite: false, blending: AdditiveBlending, fog: false }), 0.25)
+    const lampObj = new Points(lamps.deck, lampMat)
     lampObj.frustumCulled = false
+    // The cable-light string is night only.
+    const cableLightMat = gateNightMaterial(new PointsMaterial({ size: 3.2, sizeAttenuation: false, vertexColors: true, toneMapped: false, transparent: true, depthWrite: false, blending: AdditiveBlending, fog: false }), 0)
+    const cableLightObj = new Points(lamps.cable, cableLightMat)
+    cableLightObj.frustumCulled = false
     const cars = makeCars(b, 1234 + index * 97)
     const carMat = new PointsMaterial({ size: 3.6, sizeAttenuation: false, vertexColors: true, toneMapped: false, transparent: true, depthWrite: false, blending: AdditiveBlending, fog: false })
     const carObj = new Points(cars.geo, carMat)
     carObj.frustumCulled = false
-    return { structureMesh, cableMesh, lampObj, carObj, cars, carMat, lampMat, cableGeo: cables.geo, lampGeo, structureGeo }
+    return { structureMesh, cableMesh, lampObj, cableLightObj, carObj, cars, carMat, lampMat, cableLightMat, cableGeo: cables.geo, lampGeo: lamps.deck, cableLightGeo: lamps.cable, structureGeo }
   }, [b, index])
 
   useEffect(() => () => {
@@ -263,6 +278,8 @@ function BridgeMesh({ b, index }: { b: BridgeSpec; index: number }) {
     ;(built.cableMesh.material as LineBasicMaterial).dispose()
     built.lampGeo.dispose()
     built.lampMat.dispose()
+    built.cableLightGeo.dispose()
+    built.cableLightMat.dispose()
     built.cars.geo.dispose()
     built.carMat.dispose()
   }, [built])
@@ -289,6 +306,7 @@ function BridgeMesh({ b, index }: { b: BridgeSpec; index: number }) {
       <primitive object={built.structureMesh} />
       <primitive object={built.cableMesh} />
       <primitive object={built.lampObj} />
+      <primitive object={built.cableLightObj} />
       <primitive object={built.carObj} />
     </>
   )

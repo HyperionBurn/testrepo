@@ -6,7 +6,7 @@
 //  - sunDir is the unit direction FROM the scene TO the sun. Negative y means the sun is below the horizon.
 //  - sunColor / sunIntensity are the DirectionalLight colour and intensity. uSunColor carries their product.
 //  - ambient / ambientIntensity are the sky fill. uAmbient carries their product.
-import { Color, Vector3 } from 'three'
+import { Color, Vector3, type Material } from 'three'
 
 export type TimeOfDay = 'golden' | 'blue' | 'night' | 'dawn'
 
@@ -41,6 +41,41 @@ export const lightingUniforms: {
   uSunColor: { value: new Color(0, 0, 0) },
   uAmbient: { value: new Color(0, 0, 0) },
   uEmissiveGain: { value: 1 }
+}
+
+/**
+ * The night gate: 0 by day, 1 at night. Every night-only light (lamps, halos, searchlights, lit windows, beacons)
+ * scales by it, so the daytime sky never shows them. Same curve as the GLSL nightMix below.
+ */
+export function nightGate(night: number): number {
+  const t = Math.min(1, Math.max(0, (night - 0.35) / 0.35))
+  return t * t * (3 - 2 * t)
+}
+
+/** GLSL twin of nightGate. A shader that uses it declares `uniform float uNight;` and passes lightingUniforms.uNight. */
+export const NIGHT_MIX_GLSL = `
+float nightMix(float n) {
+  float t = clamp((n - 0.35) / 0.35, 0.0, 1.0);
+  return t * t * (3.0 - 2.0 * t);
+}`
+
+/**
+ * Gates a built-in material (MeshBasic, Points, Line) by the night mix: the output is dayFloor by day and full strength
+ * at night. Patches the fragment shader once, so it costs no per-frame work and reads lightingUniforms.uNight live.
+ */
+export function gateNightMaterial<M extends Material>(mat: M, dayFloor: number): M {
+  const floor = Math.min(1, Math.max(0, dayFloor)).toFixed(3)
+  mat.customProgramCacheKey = () => `night-gate-${floor}`
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uNight = lightingUniforms.uNight
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main()', `uniform float uNight;\n${NIGHT_MIX_GLSL}\nvoid main()`)
+      .replace(
+        '#include <opaque_fragment>',
+        `{ float gNight = mix(${floor}, 1.0, nightMix(uNight)); outgoingLight *= gNight; diffuseColor.a *= gNight; }\n#include <opaque_fragment>`
+      )
+  }
+  return mat
 }
 
 /** Sun direction from a compass bearing (degrees clockwise from north) and an elevation above the horizon. */
@@ -82,7 +117,7 @@ export function presetLighting(t: TimeOfDay): LightingState {
     case 'golden':
       return state({
         night: 0, bearing: 247.5, elevation: 10, sunColor: '#ffb36b', sunIntensity: 3.2,
-        ambient: '#8fb6d8', ambientIntensity: 0.9, emissiveGain: 0.3
+        ambient: '#8fb6d8', ambientIntensity: 0.45, emissiveGain: 0.3
       })
     case 'blue':
       return state({

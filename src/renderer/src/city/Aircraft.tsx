@@ -8,6 +8,7 @@ import {
   AdditiveBlending, BufferAttribute, BufferGeometry, DoubleSide, Float32BufferAttribute, Mesh, MeshBasicMaterial, Points, PointsMaterial
 } from 'three'
 import { useSky } from '../state/store'
+import { gateNightMaterial, lightingUniforms, nightGate } from './lighting'
 
 let pendingAir = 0
 
@@ -125,10 +126,11 @@ function buildFleet(): Fleet {
   contrail.setIndex(idx)
 
   const solid = new MeshBasicMaterial({ vertexColors: true, side: DoubleSide, toneMapped: false })
-  const lightMat = new PointsMaterial({
+  // Nav lights: small red and green points by day, full strength at night.
+  const lightMat = gateNightMaterial(new PointsMaterial({
     vertexColors: true, size: 4.2, sizeAttenuation: false, transparent: true,
     depthWrite: false, blending: AdditiveBlending, toneMapped: false
-  })
+  }), 0.3)
   const trailMat = new MeshBasicMaterial({
     vertexColors: true, transparent: true, depthWrite: false, side: DoubleSide, blending: AdditiveBlending, toneMapped: false
   })
@@ -155,6 +157,8 @@ function writeFleet(f: Fleet, t: number): void {
   const cc = (f.contrail.getAttribute('color') as BufferAttribute).array as Float32Array
 
   const poses = CRAFT.map((_, i) => poseAt(i, t))
+  // Contrails are a faint veil by day and read as light only at night, so the ribbons never look like beams.
+  const trail = 0.3 + 0.7 * nightGate(lightingUniforms.uNight.value)
   const height = (i: number) => CRAFT[i]!.y
 
   for (let k = 0; k < f.bodyCraft.length; k++) {
@@ -210,7 +214,7 @@ function writeFleet(f: Fleet, t: number): void {
         cc[v * 4] = 0.72
         cc[v * 4 + 1] = 0.8
         cc[v * 4 + 2] = 1.0
-        cc[v * 4 + 3] = a
+        cc[v * 4 + 3] = a * trail
       }
     }
   }

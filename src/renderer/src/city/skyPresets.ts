@@ -37,26 +37,28 @@ export interface ResolvedPreset {
 }
 
 export const PRESETS: Record<TimeOfDay, SkyPreset> = {
-  // Golden hour (the default): warm hazy horizon, pale blue zenith. The sun disc and glow sit at lighting.sunDir.
+  // Golden hour (the default): a warm grey-gold haze that the distance melts into, a soft pale blue zenith and a low,
+  // quiet band. The shadowed sun (lighting.ts) carries the image, so the unshadowed key and fill are kept low here.
+  // The sun disc and glow sit at lighting.sunDir (Sky.tsx).
   golden: {
     colors: {
-      zenith: '#8fb6d8',
-      mid: '#b4cde2',
-      teal: '#d2dde0',
-      horizon: '#f6c08a',
-      bandA: '#ffc896',
-      bandB: '#f2a377',
-      below: '#7a6a5e',
-      wisp: '#ffd3a0',
-      fog: '#e8c7a2',
-      haze: '#ffb070',
-      cloudLow: '#ffd0a0',
-      cloudHigh: '#f2b8a0',
-      hemiSky: '#8fb6d8',
+      zenith: '#9ab6cf',
+      mid: '#bccbd6',
+      teal: '#d6d2c8',
+      horizon: '#e6c9a2',
+      bandA: '#f0d2ae',
+      bandB: '#e2b992',
+      below: '#6e6258',
+      wisp: '#f2d6b4',
+      fog: '#d4bb98',
+      haze: '#e3a870',
+      cloudLow: '#f0cfae',
+      cloudHigh: '#d9bfae',
+      hemiSky: '#9ab6cf',
       hemiGround: '#6b5a48',
       key: '#ffb36b'
     },
-    levels: { star: 0, moon: 0, band: 0.6, wisps: 0.5, sheets: 0.6, hazeAmt: 0.8, scatter: 0.8, hemi: 0.5, keyI: 1 }
+    levels: { star: 0, moon: 0, band: 0.35, wisps: 0.4, sheets: 0.5, hazeAmt: 0.8, scatter: 0.5, hemi: 0.3, keyI: 0.28 }
   },
   // Blue hour, after the NYC dusk reference: deep navy zenith, teal mid-sky, orange to pink horizon band.
   blue: {

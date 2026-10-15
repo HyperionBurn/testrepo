@@ -147,15 +147,16 @@ void main() {
   float wisp = smoothstep(0.56, 0.9, fbm3(wp));
   col = mix(col, uWisp, wisp * wband * uWisps * 0.6);
 
-  // Sun (golden hour): a warm haze that thickens toward the sun, a halo and a small disc, all at uSunDir (lighting.ts).
-  // Off while the sun is below the horizon, so blue hour and night keep their sky.
+  // Sun (golden hour), all at uSunDir (lighting.ts). A small disc about 0.6 degrees across (the real sun's size), a tight
+  // soft corona and a wide warm haze that falls off across the sky. The disc stays near the bloom threshold, so it reads
+  // as a sharp small sun, not a blown-out blob. Off while the sun is below the horizon, so blue hour and night keep theirs.
   float sunUp = smoothstep(0.0, 0.05, uSunDir.y);
   float cs = clamp(dot(d, uSunDir), -1.0, 1.0);
   float th = acos(cs);
   vec3 sunTint = mix(uKey, vec3(1.0, 0.96, 0.88), 0.45);
-  col = mix(col, uKey * 1.05, pow(max(cs, 0.0), 10.0) * 0.35 * sunUp);
-  col += sunTint * (exp(-th * 5.0) * 0.26 + exp(-th * 18.0) * 0.45) * sunUp;
-  col += sunTint * (1.0 - smoothstep(0.0075, 0.0095, th)) * 3.0 * sunUp;
+  col += sunTint * (exp(-th * 3.2) * 0.15 + exp(-th * 11.0) * 0.1) * sunUp;
+  col += sunTint * exp(-max(th - 0.003, 0.0) * 120.0) * 0.3 * sunUp;
+  col += sunTint * (1.0 - smoothstep(0.0040, 0.0054, th)) * 1.6 * sunUp;
 
   if (uDetail > 0.5) {
     // Small moon: a faint corona and a cratered disc with limb darkening. Fades with the preset.

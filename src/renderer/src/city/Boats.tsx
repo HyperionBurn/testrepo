@@ -11,6 +11,7 @@ import {
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { useSky } from '../state/store'
+import { gateNightMaterial } from './lighting'
 import { RIVER_INNER, RIVER_OUTER } from './metro'
 import { colouredBox } from './Bridges'
 
@@ -155,10 +156,11 @@ function buildBoats(): Built {
   const lightGeo = new BufferGeometry()
   lightGeo.setAttribute('position', new Float32BufferAttribute(lp, 3))
   lightGeo.setAttribute('color', new Float32BufferAttribute(lc, 3))
-  const lightMat = new PointsMaterial({
+  // Cabin windows, string lights and nav lights: night only, with a faint daytime floor for the nav lights.
+  const lightMat = gateNightMaterial(new PointsMaterial({
     size: 3.4, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false,
     blending: AdditiveBlending, toneMapped: false
-  })
+  }), 0.3)
   const lights = new Points(lightGeo, lightMat)
   lights.frustumCulled = false
 

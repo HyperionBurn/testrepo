@@ -112,8 +112,8 @@ export const GRADES: Record<TimeOfDay, GradeParams> = {
     split: 0.12,
     curve: 0.3,
     warmSat: 0.12,
-    bloom: { intensity: 0.35, threshold: 0.92, radius: 0.5 },
-    halation: { intensity: 0.06, threshold: 0.85, radius: 0.6 }
+    bloom: { intensity: 0.6, threshold: 0.9, radius: 0.5 },
+    halation: { intensity: 0.06, threshold: 0.8, radius: 0.6 }
   },
   blue: BASE,
   night: {

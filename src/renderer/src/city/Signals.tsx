@@ -4,6 +4,7 @@ import type { Network } from './lanes'
 import { isSignalNode, PHASE_AMBER, PHASE_GREEN, PHASE_RED, signalOffset, signalPhase, type Phase } from './lanes'
 import { LightPoints } from './Vehicles'
 import { ROAD_Y } from './streets'
+import { lightingUniforms, nightGate } from './lighting'
 
 /** Height of the signal heads above the road, and their offset from the junction centre toward the approach. */
 const HEAD_Y = 0.46
@@ -52,12 +53,14 @@ export class SignalLayer {
   /** Lights every head for the given clock (seconds). A frozen clock gives a static junction. */
   write(clock: number, pxPerUnit?: number): void {
     if (pxPerUnit !== undefined) this.lights.setPx(pxPerUnit)
+    // Heads are visible by day but dimmer; the glow halo around each one is night only.
+    const gate = nightGate(lightingUniforms.uNight.value)
     for (let i = 0; i < this.heads.length; i++) {
       const h = this.heads[i]!
       const phase = signalPhase(clock, this.offsets[i]!, h.horizontal)
       const c = COLOUR[phase]
-      const g = LIT
-      this.lights.set(i, h.x, ROAD_Y + HEAD_Y, h.z, c[0] * g, c[1] * g, c[2] * g, 0.3)
+      const g = LIT * (0.45 + 0.55 * gate)
+      this.lights.set(i, h.x, ROAD_Y + HEAD_Y, h.z, c[0] * g, c[1] * g, c[2] * g, 0.3 * (0.2 + 0.8 * gate))
     }
     this.lights.commit(this.heads.length)
   }

@@ -21,7 +21,7 @@ const HDRI_URL: Record<TimeOfDay, string> = {
 
 /** scene.environmentIntensity per time of day: glass and wet roads pick up a hint of the sky, nothing more. */
 export const ENV_INTENSITY: Record<TimeOfDay, number> = {
-  golden: 0.5,
+  golden: 0.35,
   blue: 0.45,
   dawn: 0.4,
   night: 0.3
