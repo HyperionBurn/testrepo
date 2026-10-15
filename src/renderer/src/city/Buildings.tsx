@@ -14,6 +14,7 @@ import { loadModels, type LoadedModel } from './assets'
 import { locByPath } from './modelPicker'
 import { throttle } from './picking'
 import { loadKit, applyKitTextures, type KitData } from './kit'
+import './dev/layers'
 import { loadFacadeAtlas } from './facade/photo/atlas'
 import { setFacadeAtlas } from './facade/photo/material'
 
