@@ -110,7 +110,8 @@ function Fleet() {
     discGeo.setAttribute('position', new BufferAttribute(discPos, 3))
     discGeo.setAttribute('color', new BufferAttribute(discCol, 4))
     discGeo.setIndex(discIdx)
-    const discMat = new MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: AdditiveBlending, toneMapped: false })
+    // Rotor discs are a faint blur by day. Seen edge-on they read as a bright streak, so they lose most of their light by day.
+    const discMat = gateNightMaterial(new MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: AdditiveBlending, toneMapped: false }), 0.12)
     const discMesh = new Mesh(discGeo, discMat)
     discMesh.frustumCulled = false
 
