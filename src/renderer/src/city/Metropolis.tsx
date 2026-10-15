@@ -181,7 +181,7 @@ void main() {
   float edge = 1.0 - smoothstep(0.15, 1.0, abs(vAcross));
   float flick = 0.82 + 0.18 * sin(uTime * (1.2 + vSeed * 2.0) + vSeed * 40.0);
   vec3 sodium = mix(vec3(1.0, 0.46, 0.12), vec3(1.0, 0.74, 0.38), 0.4);
-  vec3 col = sodium * vBright * edge * flick;
+  vec3 col = sodium * vBright * edge * flick * mix(0.2, 1.0, uNight);
   // Faint wide sodium haze around each street line, so the carpet glows like a night aerial.
   col += sodium * vBright * 0.035 * uNight * (1.0 - smoothstep(0.3, 1.0, abs(vAcross)));
   float dist = length(vW - cameraPosition);

@@ -8,7 +8,7 @@
 // attributes that BuildingField writes (aSize, aLang, aGlow, aGlowColor, aSel, aShim, aSeed, aFacade, aLit, aTint).
 import { Color, InstancedBufferAttribute, MeshStandardMaterial, type BufferGeometry, type Texture, type WebGLProgramParametersWithUniforms } from 'three'
 import { createKitMaterial } from './kit/material'
-import { createPhotoFacadeMaterial, setFacadeAtlas, type PhotoFacadeMaterial } from './facade/photo/material'
+import { createPhotoFacadeMaterial, setPhotoLighting, type PhotoFacadeMaterial } from './facade/photo/material'
 import { applyReplacements } from './facade/photo/shader'
 import { MASSING_UV_GLSL } from './facade/massing'
 import { lightingUniforms } from './lighting'
@@ -316,7 +316,8 @@ const OV_HAZE = `
 
 /** The photographic massing needs UVs in metres, and its night albedo and window gain read the shared lighting. */
 const PHOTO_AMBIENT_EXPR = 'gAlb = alb * orm.r * uPhotoAmbient * uPhotoAmbientTint;'
-const PHOTO_AMBIENT_LIGHT = 'gAlb = alb * orm.r * mix(vec3(1.0), uPhotoAmbientTint * uPhotoAmbient, uNight);'
+/** Day albedo gain 0.42: photo walls under the sun land at 0.25 to 0.5, never white. Night uses the dim tinted ambient. */
+const PHOTO_AMBIENT_LIGHT = 'gAlb = alb * orm.r * mix(vec3(0.42), uPhotoAmbientTint * uPhotoAmbient, uNight);'
 
 /**
  * The kit's instanced declarations (aLit, aSeed, aTint) are written into its fragment stage too, where GLSL has no
@@ -357,7 +358,7 @@ function overlay(mat: MeshStandardMaterial, shared: Shared, opts: { photo: boole
     let frag = replaceOnce(shader.fragmentShader, '#include <common>', `#include <common>\n${OV_FRAG_DECL(!!haze)}${opts.photo ? 'uniform float uNight;\n' : ''}`)
     frag = replaceOnce(frag, '#include <lights_physical_fragment>', `${OV_FRAG_MAIN}\n#include <lights_physical_fragment>`)
     if (haze) frag = replaceOnce(frag, '#include <opaque_fragment>', `${OV_HAZE}\n#include <opaque_fragment>`)
-    if (!opts.photo) frag = stripKitFragmentAttributes(frag)
+    if (!opts.photo) frag = replaceOnce(stripKitFragmentAttributes(frag), '#include <lights_physical_fragment>', `diffuseColor.rgb *= mix(0.5, 1.0, uNight);\n#include <lights_physical_fragment>`)
     if (opts.photo) {
       frag = replaceOnce(frag, PHOTO_AMBIENT_EXPR, PHOTO_AMBIENT_LIGHT)
       shader.vertexShader = replaceOnce(shader.vertexShader, 'vFUV = aFacadeUV;', MASSING_UV_GLSL)
@@ -369,6 +370,8 @@ function overlay(mat: MeshStandardMaterial, shared: Shared, opts: { photo: boole
 /** The photographic massing material, with the overlay (and the metropolis haze when `haze` is given). */
 export function createFacadeMaterial(shared: Shared, haze?: HazeOptions): PhotoFacadeMaterial {
   const mat = createPhotoFacadeMaterial({ instanced: true })
+  // Normal-map strength: the full strength made the glass read as static at close range.
+  setPhotoLighting(mat, { normalScale: 0.5 })
   if (haze) mat.fog = false
   overlay(mat, shared, { photo: true, haze })
   return mat

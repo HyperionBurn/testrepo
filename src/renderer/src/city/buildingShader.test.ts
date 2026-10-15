@@ -87,7 +87,7 @@ describe('facade material (photographic massing with the building overlay)', () 
 
   it('applies the night albedo through uNight (dim at night, full in day)', () => {
     const { fragment } = compiled(createBuildingMaterials().facade)
-    expect(fragment).toContain('mix(vec3(1.0), uPhotoAmbientTint * uPhotoAmbient, uNight)')
+    expect(fragment).toContain('mix(vec3(0.42), uPhotoAmbientTint * uPhotoAmbient, uNight)')
     expect(fragment).not.toContain('gAlb = alb * orm.r * uPhotoAmbient * uPhotoAmbientTint;')
   })
 
