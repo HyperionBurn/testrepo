@@ -1,4 +1,6 @@
-# City v4 — Real New York (design brief & contracts)
+# City v4 — New York quality (design brief & contracts)
+
+> **Decision (user):** it does not need to be literally Manhattan — it needs to LOOK like New York, and quality beats the effort of cloning real geography. The OpenStreetMap pipeline (package D1) is CANCELLED. The surrounding city stays procedural (metro.ts) but every building gets the photographic facade material, NYC-statistics massing (setbacks, crowns, podiums) and real lighting. Sections below about OSM data are kept only for history.
 
 v3 looked "vibe-coded": untextured boxes with procedural window noise, an invented city, no real
 materials, and screenshots full of debug clutter. v4 replaces the fakes with real source material.
